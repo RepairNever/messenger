@@ -1,0 +1,235 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+@import './styles/markdown.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    /* FOUC guard: these defaults mirror the dark preset in services/theme/themes.ts. */
+    color-scheme: dark;
+    --color-bg-primary: 13 17 24;
+    --color-bg-secondary: 10 13 20;
+    --color-bg-tertiary: 24 30 41;
+    --color-surface: 13 17 24;
+    --color-surface-hover: 20 26 36;
+    --color-input: 18 23 32;
+    --color-divider: 48 58 76;
+    --color-text-primary: 237 242 250;
+    --color-text-secondary: 191 203 221;
+    --color-text-muted: 134 150 173;
+    --color-text-on-accent: 255 255 255;
+    --color-accent: 59 130 246;
+    --color-accent-hover: 96 165 250;
+    --color-selection-bg: 37 99 235;
+    --color-selection-text: 255 255 255;
+    --color-selection-border: 96 165 250;
+    --color-task-id: 224 168 84;
+    --color-task-id-bg: 46 39 24;
+    --color-status-green: 52 211 153;
+    --color-status-red: 248 113 113;
+    --color-status-amber: 251 191 36;
+    --color-sidebar-bg: 10 13 20;
+    --color-sidebar-hover: 24 30 41;
+    --color-sidebar-text: 205 214 228;
+    --color-sidebar-text-muted: 130 145 168;
+    --color-sidebar-heading: 96 110 134;
+    --color-sidebar-unread-badge: 255 190 190;
+    --color-inline-code-text: 96 165 250;
+}
+
+html,
+body,
+#app {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    @apply bg-chat-bg text-app-text;
+    font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+}
+
+::selection {
+    background: rgb(var(--color-selection-bg) / 0.35);
+}
+
+@layer utilities {
+    .theme-selection {
+        position: relative;
+        background-color: rgb(var(--color-selection-bg));
+        color: rgb(var(--color-selection-text));
+    }
+
+    .theme-selection::before {
+        content: "";
+        position: absolute;
+        inset-block: 0;
+        left: 0;
+        width: 2px;
+        background-color: rgb(var(--color-selection-border));
+    }
+
+    .theme-task-id {
+        background-color: rgb(var(--color-task-id-bg));
+        color: rgb(var(--color-task-id));
+        border-color: rgb(var(--color-task-id) / 0.25);
+    }
+}
+
+html[data-color-theme] .text-white,
+html[data-color-theme] .text-gray-100 {
+    color: rgb(var(--color-text-primary)) !important;
+}
+
+html[data-color-theme] .text-gray-200,
+html[data-color-theme] .text-gray-300 {
+    color: rgb(var(--color-text-secondary)) !important;
+}
+
+html[data-color-theme] .text-gray-400,
+html[data-color-theme] .text-gray-500,
+html[data-color-theme] .text-gray-600,
+html[data-color-theme] .placeholder-gray-600::placeholder {
+    color: rgb(var(--color-text-muted)) !important;
+}
+
+html[data-color-theme] .bg-white\/4,
+html[data-color-theme] .bg-white\/5,
+html[data-color-theme] .bg-white\/8,
+html[data-color-theme] .bg-white\/10,
+html[data-color-theme] .bg-white\/15,
+html[data-color-theme] .bg-white\/20,
+html[data-color-theme] .hover\:bg-white\/4:hover,
+html[data-color-theme] .hover\:bg-white\/5:hover,
+html[data-color-theme] .hover\:bg-white\/10:hover,
+html[data-color-theme] .hover\:bg-white\/15:hover,
+html[data-color-theme] .hover\:bg-white\/20:hover {
+    background-color: rgb(var(--color-surface-hover)) !important;
+}
+
+html[data-color-theme] .border-white\/5,
+html[data-color-theme] .border-white\/10,
+html[data-color-theme] .border-white\/12,
+html[data-color-theme] .hover\:border-white\/30:hover {
+    border-color: rgb(var(--color-divider)) !important;
+}
+
+html[data-color-theme] .bg-\[\#1a1d21\],
+html[data-color-theme] .bg-\[\#1A1D21\],
+html[data-color-theme] .bg-\[\#222529\],
+html[data-color-theme] .bg-black\/40 {
+    background-color: rgb(var(--color-surface)) !important;
+}
+
+html[data-color-theme] .bg-accent.text-white,
+html[data-color-theme] .bg-accent-hover.text-white,
+html[data-color-theme] .bg-red-500.text-white,
+html[data-color-theme] .bg-red-500\/90.text-white,
+html[data-color-theme] .bg-emerald-600.text-white,
+html[data-color-theme] .bg-sidebar-active.text-white,
+html[data-color-theme] .bg-sidebar-active .text-white,
+html[data-color-theme] .theme-selection,
+html[data-color-theme] .theme-selection .text-white {
+    color: rgb(var(--color-text-on-accent)) !important;
+}
+
+html[data-color-scheme="light"] .bg-sidebar-active {
+    background-color: rgb(var(--color-selection-bg)) !important;
+    color: rgb(var(--color-selection-text)) !important;
+    box-shadow: inset 2px 0 0 rgb(var(--color-selection-border));
+}
+
+html[data-color-scheme="light"] .bg-sidebar-active.text-white,
+html[data-color-scheme="light"] .bg-sidebar-active .text-white {
+    color: rgb(var(--color-selection-text)) !important;
+}
+
+/* Thin scrollbar for sidebar / chat */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgb(var(--color-divider));
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--color-text-muted));
+}
+
+.emoji-picker-dark .emoji-mart {
+    background-color: rgb(var(--color-surface)) !important;
+    border-color: rgb(var(--color-divider)) !important;
+    color: rgb(var(--color-text-primary)) !important;
+}
+
+.emoji-picker-dark .emoji-mart * {
+    color: rgb(var(--color-text-primary)) !important;
+}
+
+.emoji-picker-dark .emoji-mart-search input {
+    background-color: rgb(var(--color-input)) !important;
+    border-color: rgb(var(--color-divider)) !important;
+    color: rgb(var(--color-text-primary)) !important;
+}
+
+.emoji-picker-dark .emoji-mart-search input::placeholder {
+    color: rgb(var(--color-text-muted)) !important;
+}
+
+.emoji-picker-dark .emoji-mart-bar {
+    border-color: rgb(var(--color-divider)) !important;
+}
+
+.emoji-picker-dark .emoji-mart-anchors {
+    color: rgb(var(--color-text-secondary)) !important;
+}
+
+.emoji-picker-dark .emoji-mart-category-label span {
+    background-color: rgb(var(--color-surface)) !important;
+    color: rgb(var(--color-text-muted)) !important;
+}
+
+.emoji-picker-dark .emoji-mart-category-label h3 {
+    background-color: rgb(var(--color-surface)) !important;
+    color: rgb(var(--color-text-primary)) !important;
+}
+
+.emoji-picker-dark .emoji-mart-category .emoji-mart-emoji:hover:before,
+.emoji-picker-dark .emoji-mart-emoji-selected:before {
+    background-color: rgb(var(--color-surface-hover)) !important;
+}
+
+.emoji-picker-dark .emoji-mart-anchor:hover,
+.emoji-picker-dark .emoji-mart-anchor-selected {
+    color: rgb(var(--color-accent)) !important;
+}
+
+.emoji-picker-dark .emoji-mart-anchor-bar {
+    background-color: rgb(var(--color-accent)) !important;
+}
+
+.emoji-picker-dark .emoji-mart-preview-name,
+.emoji-picker-dark .emoji-mart-preview-shortname,
+.emoji-picker-dark .emoji-mart-preview-emoticon,
+.emoji-picker-dark .emoji-mart-title-label {
+    color: rgb(var(--color-text-primary)) !important;
+}
+
+.emoji-picker-dark .emoji-mart-skin-swatches {
+    background-color: rgb(var(--color-input)) !important;
+    border-color: rgb(var(--color-divider)) !important;
+}
+
+.emoji-picker-dark .emoji-mart-preview-emoji,
+.emoji-picker-dark .emoji-mart-no-results {
+    color: rgb(var(--color-text-primary)) !important;
+}

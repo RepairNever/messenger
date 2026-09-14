@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Msgnr Overlay</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+      }
+
+      #overlay {
+        width: 100%;
+        height: 100%;
+        display: block;
+        pointer-events: none;
+        background: transparent;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="overlay"></canvas>
+    <script>
+      const SEGMENT_TTL_MS = 20000;
+      const FADE_MS = 300;
+      const RENDER_INTERVAL_MS = 33;
+      const MAX_SEGMENTS = 1024;
+      const MAX_BATCH_SEGMENTS = 128;
+      const FALLBACK_STROKE_COLOR = '#f59e0b';
+      const STROKE_WIDTH = 3;
+      const segments = [];
+      const strokes = new Map();
+      const segmentKeys = new Set();
+      let renderTimer = 0;
+      let lastDrawAt = 0;
+
+      const canvas = document.getElementById('overlay');
+      const ctx = canvas.getContext('2d', { alpha: true });
+
+      function resize() {
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const width = Math.max(1, Math.floor(window.innerWidth));
+        const height = Math.max(1, Math.floor(window.innerHeight));
+        canvas.width = Math.floor(width * dpr);
+        canvas.height = Math.floor(height * dpr);
+        if (!ctx) return;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        requestDraw();
+      }
+
+      function clamp01(value) {
+        if (value < 0) return 0;
+        if (value > 1) return 1;
+        return value;
+      }
+
+      function segmentKey(segment) {
+        return `${segment.senderIdentity || ''}:${segment.strokeId || ''}:${segment.seq ?? 0}`;
+      }
+
+      function strokeKey(segment) {
+        return `${segment.senderIdentity || ''}:${segment.strokeId || ''}`;
+      }
+
+      function toPoint(point, width, height) {
+        return {
+          x: clamp01(Number(point.x)) * width,
+          y: clamp01(Number(point.y)) * height,
+        };
+      }
+
+      function removeSegment(segment) {
+        segmentKeys.delete(segment.key);
+        const stroke = strokes.get(segment.strokeKey);
+        if (!stroke) return;
+        const index = stroke.segments.indexOf(segment);
+        if (index >= 0) {
+          stroke.segments.splice(index, 1);
+        }
+        if (stroke.segments.length === 0) {
+          strokes.delete(segment.strokeKey);
+        }
+      }
+
+      function prune(now) {
+        // Entries are appended in arrival order, and expiry is derived from
+        // arrival time, so expired entries are always at the front.
+        while (segments.length > 0 && segments[0].expiresAt <= now) {
+          removeSegment(segments.shift());
+        }
+      }
+
+      function addSegmentToStroke(segment) {
+        let stroke = strokes.get(segment.strokeKey);
+        if (!stroke) {
+          stroke = { segments: [] };
+          strokes.set(segment.strokeKey, stroke);
+        }
+        const items = stroke.segments;
+        const last = items[items.length - 1];
+        if (!last || last.seq <= segment.seq) {
+          items.push(segment);
+          return;
+        }
+        let index = items.length;
+        while (index > 0 && items[index - 1].seq > segment.seq) {
+          index -= 1;
+        }
+        items.splice(index, 0, segment);
+      }
+
+      function enforceSegmentLimit() {
+        while (segments.length > MAX_SEGMENTS) {
+          removeSegment(segments.shift());
+        }
+      }
+
+      function strokeSmoothedPath(points) {
+        if (points.length < 2) return;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        if (points.length === 2) {
+          ctx.lineTo(points[1].x, points[1].y);
+          ctx.stroke();
+          return;
+        }
+        for (let index = 1; index < points.length - 1; index += 1) {
+          const current = points[index];
+          const next = points[index + 1];
+          ctx.quadraticCurveTo(current.x, current.y, (current.x + next.x) / 2, (current.y + next.y) / 2);
+        }
+        const last = points[points.length - 1];
+        ctx.lineTo(last.x, last.y);
+        ctx.stroke();
+      }
+
+      function drawStroke(stroke, width, height, now) {
+        const points = [];
+        let alpha = 1;
+        for (const segment of stroke.segments) {
+          const msLeft = segment.expiresAt - now;
+          if (msLeft <= 0) continue;
+          alpha = Math.min(alpha, msLeft < FADE_MS ? Math.max(0, msLeft / FADE_MS) : 1);
+          if (points.length === 0) {
+            points.push(toPoint(segment.from, width, height));
+          }
+          points.push(toPoint(segment.to, width, height));
+        }
+        if (points.length < 2) return;
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = stroke.segments[0]?.color || FALLBACK_STROKE_COLOR;
+        strokeSmoothedPath(points);
+      }
+
+      function draw() {
+        const now = Date.now();
+        lastDrawAt = now;
+        prune(now);
+        if (!ctx) return;
+
+        const width = Math.max(1, window.innerWidth);
+        const height = Math.max(1, window.innerHeight);
+        ctx.clearRect(0, 0, width, height);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = STROKE_WIDTH;
+
+        for (const stroke of strokes.values()) {
+          drawStroke(stroke, width, height, now);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      function requestDraw() {
+        if (renderTimer) return;
+        const delay = Math.max(0, RENDER_INTERVAL_MS - (Date.now() - lastDrawAt));
+        renderTimer = window.setTimeout(() => {
+          renderTimer = 0;
+          draw();
+          if (segments.length > 0) {
+            requestDraw();
+          }
+        }, delay);
+      }
+
+      function pushSegment(segment, scheduleDraw = true) {
+        if (!segment || typeof segment !== 'object') return false;
+        if (!segment.from || !segment.to) return false;
+        const key = segmentKey(segment);
+        if (segmentKeys.has(key)) return false;
+
+        const normalized = {
+          key,
+          strokeKey: strokeKey(segment),
+          from: segment.from,
+          to: segment.to,
+          senderIdentity: String(segment.senderIdentity || ''),
+          strokeId: String(segment.strokeId || ''),
+          seq: Number.isInteger(segment.seq) ? segment.seq : 0,
+          color: typeof segment.color === 'string' && segment.color.trim() ? segment.color : FALLBACK_STROKE_COLOR,
+          expiresAt: Date.now() + SEGMENT_TTL_MS,
+        };
+        segmentKeys.add(key);
+        segments.push(normalized);
+        addSegmentToStroke(normalized);
+        enforceSegmentLimit();
+        if (scheduleDraw) {
+          requestDraw();
+        }
+        return true;
+      }
+
+      function pushSegments(segmentsBatch) {
+        if (!Array.isArray(segmentsBatch)) return;
+        let changed = false;
+        for (const segment of segmentsBatch.slice(0, MAX_BATCH_SEGMENTS)) {
+          changed = pushSegment(segment, false) || changed;
+        }
+        if (changed) {
+          requestDraw();
+        }
+      }
+
+      window.__overlayPushSegmentsFromJson = function overlayPushSegmentsFromJson(raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          pushSegments(Array.isArray(parsed) ? parsed : [parsed]);
+        } catch {
+          // best effort
+        }
+      };
+
+      window.__overlayPushSegmentFromJson = function overlayPushSegmentFromJson(raw) {
+        try {
+          pushSegment(JSON.parse(raw));
+        } catch {
+          // best effort
+        }
+      };
+
+      window.__overlayClear = function overlayClear() {
+        segments.length = 0;
+        strokes.clear();
+        segmentKeys.clear();
+        if (renderTimer) {
+          window.clearTimeout(renderTimer);
+          renderTimer = 0;
+        }
+        draw();
+      };
+
+      window.addEventListener('resize', resize);
+      resize();
+      draw();
+    </script>
+  </body>
+</html>
