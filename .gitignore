@@ -21,7 +21,7 @@ internal/gen/
 # Local config
 .env
 
-server
+/server
 web/dist
 web/node_modules
 web/src-tauri/target
