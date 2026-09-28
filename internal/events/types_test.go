@@ -100,6 +100,15 @@ func TestValidateEventTypePayload_Valid(t *testing.T) {
 				},
 			},
 		},
+		{
+			"task_comment_created",
+			&packetspb.ServerEvent{
+				EventType: packetspb.EventType_EVENT_TYPE_TASK_COMMENT_CREATED,
+				Payload: &packetspb.ServerEvent_TaskCommentCreated{
+					TaskCommentCreated: &packetspb.TaskCommentCreatedEvent{},
+				},
+			},
+		},
 	}
 
 	for _, tc := range cases {

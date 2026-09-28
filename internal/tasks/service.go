@@ -5115,9 +5115,11 @@ func (s *Service) CreateComment(ctx context.Context, taskID, authorID uuid.UUID,
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	// Lock the parent task row so delete cannot race between validation and
-	// INSERT into task_comment.
-	var marker int
-	if err := tx.QueryRow(ctx, `SELECT 1 FROM task WHERE id = $1 FOR KEY SHARE`, taskID).Scan(&marker); err != nil {
+	// INSERT into task_comment. The public id and discussion channel feed the
+	// task_comment_created event payload.
+	var publicID string
+	var discussionChannelID uuid.NullUUID
+	if err := tx.QueryRow(ctx, `SELECT public_id, discussion_channel_id FROM task WHERE id = $1 FOR KEY SHARE`, taskID).Scan(&publicID, &discussionChannelID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("%w: task", ErrNotFound)
 		}
@@ -5168,6 +5170,16 @@ func (s *Service) CreateComment(ctx context.Context, taskID, authorID uuid.UUID,
 		}
 	}
 
+	var authorName string
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(NULLIF(display_name, ''), email)
+		  FROM users
+		 WHERE id = $1`,
+		authorID,
+	).Scan(&authorName); err != nil {
+		return nil, fmt.Errorf("tasks: load comment author name: %w", err)
+	}
+
 	var out CommentRow
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO task_comment (task_id, author_id, body)
@@ -5211,6 +5223,32 @@ func (s *Service) CreateComment(ctx context.Context, taskID, authorID uuid.UUID,
 		}
 	} else {
 		out.Attachments = []CommentAttachmentRow{}
+	}
+
+	// Emit in the same tx so the comment and its event commit atomically.
+	// thread_root_message_id stays empty: threads attach later via
+	// EnsureCommentThread, never at comment creation.
+	eventChannelID := ""
+	if discussionChannelID.Valid {
+		eventChannelID = discussionChannelID.UUID.String()
+	}
+	commentProto := &packetspb.TaskCommentCreatedEvent{
+		TaskId:              taskID.String(),
+		PublicId:            publicID,
+		CommentId:           out.ID.String(),
+		AuthorId:            authorID.String(),
+		AuthorName:          authorName,
+		Body:                out.Body,
+		AttachmentCount:     int32(len(out.Attachments)),
+		DiscussionChannelId: eventChannelID,
+	}
+	commentServerEvt := &packetspb.ServerEvent{
+		EventType:      packetspb.EventType_EVENT_TYPE_TASK_COMMENT_CREATED,
+		ConversationId: eventChannelID,
+		Payload:        &packetspb.ServerEvent_TaskCommentCreated{TaskCommentCreated: commentProto},
+	}
+	if err := s.appendAndNotifyTx(ctx, tx, "task_comment_created", eventChannelID, commentProto, commentServerEvt); err != nil {
+		return nil, fmt.Errorf("tasks: emit task comment created event: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -5526,12 +5564,13 @@ func (s *Service) EnsureCommentThread(ctx context.Context, taskID, commentID, ac
 		).Scan(&channelID); err != nil {
 			return nil, fmt.Errorf("tasks: create hidden task discussion channel: %w", err)
 		}
+		// Bots are included so comment-thread replies reach them through the
+		// membership-filtered bot event stream.
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO channel_members (channel_id, user_id)
 			SELECT $1, u.id
 			  FROM users u
 			 WHERE u.status = 'active'
-			   AND u.role <> 'bot'
 			ON CONFLICT (channel_id, user_id) DO UPDATE
 			    SET is_archived = false`,
 			channelID,
@@ -5560,6 +5599,21 @@ func (s *Service) EnsureCommentThread(ctx context.Context, taskID, commentID, ac
 			actorID,
 		); err != nil {
 			return nil, fmt.Errorf("tasks: ensure requester task channel membership: %w", err)
+		}
+		// Unlike humans, bots never deliberately leave the hidden channel, so
+		// re-add any missing bot. This also retroactively covers channels
+		// created before bots were included.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO channel_members (channel_id, user_id)
+			SELECT $1, u.id
+			  FROM users u
+			 WHERE u.status = 'active'
+			   AND u.role = 'bot'
+			ON CONFLICT (channel_id, user_id) DO UPDATE
+			    SET is_archived = false`,
+			channelID,
+		); err != nil {
+			return nil, fmt.Errorf("tasks: ensure bot task channel membership: %w", err)
 		}
 	}
 

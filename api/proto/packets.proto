@@ -154,6 +154,7 @@ enum EventType {
   EVENT_TYPE_DM_HISTORY_CLEARED = 21;
   EVENT_TYPE_CALL_RAISED_HANDS_CHANGED = 22;
   EVENT_TYPE_SECRET_HISTORY_INVALIDATED = 23;
+  EVENT_TYPE_TASK_COMMENT_CREATED = 24;
 }
 
 message Envelope {
@@ -887,6 +888,18 @@ message TaskStatusChangedEvent {
   google.protobuf.Timestamp updated_at = 6;
 }
 
+message TaskCommentCreatedEvent {
+  string task_id = 1;
+  string public_id = 2;                 // e.g. "DEV-42"
+  string comment_id = 3;
+  string author_id = 4;
+  string author_name = 5;               // display_name, falls back to email
+  string body = 6;                      // plain text, may be empty (attachment-only)
+  int32 attachment_count = 7;
+  string discussion_channel_id = 8;     // empty when no discussion channel exists yet
+  string thread_root_message_id = 9;    // empty when the comment has no thread yet
+}
+
 message MessageAlertEvent {
   string conversation_id = 1;
   string message_id = 2;
@@ -932,5 +945,6 @@ message ServerEvent {
     DmHistoryClearedEvent dm_history_cleared = 30;
     CallRaisedHandsChangedEvent call_raised_hands_changed = 31;
     SecretHistoryInvalidatedEvent secret_history_invalidated = 32;
+    TaskCommentCreatedEvent task_comment_created = 33;
   }
 }

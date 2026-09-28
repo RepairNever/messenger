@@ -818,7 +818,7 @@ func (s *Service) SendMessage(ctx context.Context, p SendMessageParams) (SendMes
 		return SendMessageResult{}, fmt.Errorf("chat.SendMessage insert entities: %w", err)
 	}
 
-	sender, err := s.lookupActiveDMUser(ctx, p.SenderID)
+	sender, err := s.lookupActiveDMUserIncludingBots(ctx, p.SenderID)
 	if err != nil {
 		return SendMessageResult{}, fmt.Errorf("chat.SendMessage lookup sender: %w", err)
 	}

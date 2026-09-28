@@ -125,3 +125,36 @@ func TestSecretHistoryInvalidatedCodecAndValidation(t *testing.T) {
 	require.NoError(t, ValidateEventTypePayload("secret_history_invalidated", evt))
 	require.Error(t, ValidateEventTypePayload("secret_history_invalidated", &packetspb.ServerEvent{EventType: packetspb.EventType_EVENT_TYPE_SECRET_HISTORY_INVALIDATED}))
 }
+
+func TestTaskCommentCreatedCodecAndValidation(t *testing.T) {
+	payload := []byte(`{
+		"taskId":"task-9",
+		"publicId":"DEV-42",
+		"commentId":"comment-1",
+		"authorId":"user-1",
+		"authorName":"Ada",
+		"body":"looks good",
+		"attachmentCount":2,
+		"discussionChannelId":"chan-1",
+		"threadRootMessageId":"msg-1"
+	}`)
+
+	evt, err := buildServerEventFromStored("task_comment_created", "66666666-6666-6666-6666-666666666666", "chan-1", time.Unix(1700004000, 0).UTC(), payload)
+	require.NoError(t, err)
+	require.NotNil(t, evt)
+	assert.Equal(t, packetspb.EventType_EVENT_TYPE_TASK_COMMENT_CREATED, evt.GetEventType())
+	assert.Equal(t, "chan-1", evt.GetConversationId())
+	require.NotNil(t, evt.GetTaskCommentCreated())
+	got := evt.GetTaskCommentCreated()
+	assert.Equal(t, "task-9", got.GetTaskId())
+	assert.Equal(t, "DEV-42", got.GetPublicId())
+	assert.Equal(t, "comment-1", got.GetCommentId())
+	assert.Equal(t, "user-1", got.GetAuthorId())
+	assert.Equal(t, "Ada", got.GetAuthorName())
+	assert.Equal(t, "looks good", got.GetBody())
+	assert.Equal(t, int32(2), got.GetAttachmentCount())
+	assert.Equal(t, "chan-1", got.GetDiscussionChannelId())
+	assert.Equal(t, "msg-1", got.GetThreadRootMessageId())
+	require.NoError(t, ValidateEventTypePayload("task_comment_created", evt))
+	require.Error(t, ValidateEventTypePayload("task_comment_created", &packetspb.ServerEvent{EventType: packetspb.EventType_EVENT_TYPE_TASK_COMMENT_CREATED}))
+}

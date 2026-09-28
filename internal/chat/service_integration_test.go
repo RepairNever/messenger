@@ -847,7 +847,7 @@ func TestIntegration_Reaction_Idempotent(t *testing.T) {
 	assert.Error(t, err, "reaction_counts row should have been deleted")
 }
 
-func TestIntegration_ListDMCandidates_ExcludesSelfBlockedAndBotUsers(t *testing.T) {
+func TestIntegration_ListDMCandidates_ExcludesSelfAndBlockedIncludesBots(t *testing.T) {
 	pool, _ := testdb.New(t)
 	ctx := context.Background()
 
@@ -857,13 +857,189 @@ func TestIntegration_ListDMCandidates_ExcludesSelfBlockedAndBotUsers(t *testing.
 	selfID := seedChatUserWithAttrs(t, ctx, pool, "Self", "member", "active")
 	activeID := seedChatUserWithAttrs(t, ctx, pool, "Active User", "member", "active")
 	seedChatUserWithAttrs(t, ctx, pool, "Blocked User", "member", "blocked")
-	seedChatUserWithAttrs(t, ctx, pool, "Bot User", "bot", "active")
+	botID := seedChatUserWithAttrs(t, ctx, pool, "Bot User", "bot", "active")
 
 	candidates, err := svc.ListDMCandidates(ctx, selfID)
 	require.NoError(t, err)
-	require.Len(t, candidates, 1)
+	require.Len(t, candidates, 2)
 	assert.Equal(t, activeID, candidates[0].UserID)
 	assert.Equal(t, "Active User", candidates[0].DisplayName)
+	assert.Equal(t, botID, candidates[1].UserID)
+	assert.Equal(t, "Bot User", candidates[1].DisplayName)
+}
+
+func TestIntegration_ListThreadReplay_MatchesSubscribeWithoutSideEffects(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+
+	store := events.NewStore(pool)
+	svc := chat.NewService(pool, store)
+
+	userID, channelID := seedUserAndChannel(t, ctx, pool)
+	peerID := createMemberInChannel(t, ctx, pool, channelID, "Thread Peer")
+
+	root, err := svc.SendMessage(ctx, chat.SendMessageParams{
+		ChannelID:   channelID,
+		SenderID:    userID,
+		ClientMsgID: uuid.New().String(),
+		Body:        "root",
+	})
+	require.NoError(t, err)
+	r1, err := svc.SendMessage(ctx, chat.SendMessageParams{
+		ChannelID:           channelID,
+		SenderID:            peerID,
+		ClientMsgID:         uuid.New().String(),
+		Body:                "reply one",
+		ThreadRootMessageID: root.MessageID,
+	})
+	require.NoError(t, err)
+	r2, err := svc.SendMessage(ctx, chat.SendMessageParams{
+		ChannelID:           channelID,
+		SenderID:            userID,
+		ClientMsgID:         uuid.New().String(),
+		Body:                "reply two",
+		ThreadRootMessageID: root.MessageID,
+	})
+	require.NoError(t, err)
+
+	replay, err := svc.ListThreadReplay(ctx, userID, channelID, root.MessageID, 0)
+	require.NoError(t, err)
+	require.Len(t, replay.Messages, 2)
+	assert.Equal(t, r1.MessageID, replay.Messages[0].ID)
+	assert.Equal(t, r2.MessageID, replay.Messages[1].ID)
+	assert.Equal(t, "Thread Peer", replay.Messages[0].SenderName)
+	assert.Equal(t, int64(1), replay.Messages[0].ThreadSeq)
+	assert.Equal(t, int64(2), replay.Messages[1].ThreadSeq)
+	assert.Equal(t, root.MessageID, replay.Messages[0].ThreadRootMessageID)
+	assert.Equal(t, chat.MessageContentPlaintext, replay.Messages[0].ContentMode)
+	assert.Equal(t, int64(2), replay.CurrentThreadSeq)
+	assert.Equal(t, int32(2), replay.ReplyCount)
+
+	// Cursor: only replies strictly after thread_seq 1.
+	tail, err := svc.ListThreadReplay(ctx, userID, channelID, root.MessageID, 1)
+	require.NoError(t, err)
+	require.Len(t, tail.Messages, 1)
+	assert.Equal(t, r2.MessageID, tail.Messages[0].ID)
+
+	// Same ordered set as SubscribeThread's replay (subscribed by the peer).
+	sub, err := svc.SubscribeThread(ctx, chat.SubscribeThreadParams{
+		ChannelID:           channelID,
+		RequesterID:         peerID,
+		ThreadRootMessageID: root.MessageID,
+		LastThreadSeq:       0,
+	})
+	require.NoError(t, err)
+	require.Len(t, sub.Replay, 2)
+	assert.Equal(t, replay.Messages[0].ID.String(), sub.Replay[0].MessageId)
+	assert.Equal(t, replay.Messages[1].ID.String(), sub.Replay[1].MessageId)
+	assert.Equal(t, replay.CurrentThreadSeq, sub.CurrentThreadSeq)
+	assert.Equal(t, replay.ReplyCount, sub.ReplyCount)
+
+	// The side-effect-free reader must not get a thread_reads row.
+	var reads int
+	err = pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM thread_reads WHERE root_message_id = $1 AND user_id = $2`,
+		root.MessageID, userID,
+	).Scan(&reads)
+	require.NoError(t, err)
+	assert.Equal(t, 0, reads)
+
+	// Non-member → ErrNotMember.
+	outsiderID := seedChatUserWithAttrs(t, ctx, pool, "Outsider", "member", "active")
+	_, err = svc.ListThreadReplay(ctx, outsiderID, channelID, root.MessageID, 0)
+	assert.ErrorIs(t, err, chat.ErrNotMember)
+
+	// Root belonging to a different channel → ErrInvalidThread.
+	_, otherChannelID := seedUserAndChannel(t, ctx, pool)
+	_, err = svc.ListThreadReplay(ctx, userID, otherChannelID, root.MessageID, 0)
+	assert.ErrorIs(t, err, chat.ErrInvalidThread)
+
+	// Unknown root → ErrMessageNotFound.
+	_, err = svc.ListThreadReplay(ctx, userID, channelID, uuid.New(), 0)
+	assert.ErrorIs(t, err, chat.ErrMessageNotFound)
+}
+
+func TestIntegration_DirectMessage_HumanBotFlow(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+
+	store := events.NewStore(pool)
+	svc := chat.NewService(pool, store)
+
+	humanID := seedChatUserWithAttrs(t, ctx, pool, "Human", "member", "active")
+	botID := seedChatUserWithAttrs(t, ctx, pool, "Bot", "bot", "active")
+
+	// Human can open a DM with a bot.
+	dm, err := svc.CreateOrOpenDirectMessage(ctx, humanID, botID)
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, dm.DM.ConversationID)
+
+	var botMember bool
+	err = pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM channel_members WHERE channel_id = $1 AND user_id = $2 AND is_archived = false)`,
+		dm.DM.ConversationID, botID,
+	).Scan(&botMember)
+	require.NoError(t, err)
+	assert.True(t, botMember)
+
+	// Bot authors a DM reply; human messages still work.
+	sent, err := svc.SendMessage(ctx, chat.SendMessageParams{
+		ChannelID:   dm.DM.ConversationID,
+		SenderID:    botID,
+		ClientMsgID: "bot-" + uuid.New().String(),
+		Body:        "beep",
+	})
+	require.NoError(t, err)
+	assert.False(t, sent.Deduped)
+	_, err = svc.SendMessage(ctx, chat.SendMessageParams{
+		ChannelID:   dm.DM.ConversationID,
+		SenderID:    humanID,
+		ClientMsgID: uuid.New().String(),
+		Body:        "hello bot",
+	})
+	require.NoError(t, err)
+
+	// Archived-restore path re-opens the same DM.
+	_, err = pool.Exec(ctx, `UPDATE channel_members SET is_archived = true WHERE channel_id = $1`, dm.DM.ConversationID)
+	require.NoError(t, err)
+	reopened, err := svc.CreateOrOpenDirectMessage(ctx, humanID, botID)
+	require.NoError(t, err)
+	assert.Equal(t, dm.DM.ConversationID, reopened.DM.ConversationID)
+
+	// E2EE upgrade over a human↔bot plaintext DM still fails.
+	_, err = svc.CreateOrOpenEncryptedDirectMessage(ctx, humanID, dm.DM.ConversationID)
+	assert.ErrorIs(t, err, chat.ErrBlockedDMTarget)
+}
+
+func TestIntegration_SendMessage_BotSenderInChannel(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+
+	store := events.NewStore(pool)
+	svc := chat.NewService(pool, store)
+
+	_, channelID := seedUserAndChannel(t, ctx, pool)
+	botID := seedChatUserWithAttrs(t, ctx, pool, "Channel Bot", "bot", "active")
+	_, err := pool.Exec(ctx,
+		`INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)`,
+		channelID, botID,
+	)
+	require.NoError(t, err)
+
+	sent, err := svc.SendMessage(ctx, chat.SendMessageParams{
+		ChannelID:   channelID,
+		SenderID:    botID,
+		ClientMsgID: "bot-" + uuid.New().String(),
+		Body:        "bot channel message",
+	})
+	require.NoError(t, err)
+	assert.NotEqual(t, uuid.Nil, sent.MessageID)
+	assert.False(t, sent.Deduped)
+
+	var body string
+	err = pool.QueryRow(ctx, `SELECT body FROM messages WHERE id = $1`, sent.MessageID).Scan(&body)
+	require.NoError(t, err)
+	assert.Equal(t, "bot channel message", body)
 }
 
 func TestIntegration_SearchTagEntities_FilteredQuery_RespectsMembershipOrderingAndLimit(t *testing.T) {

@@ -485,7 +485,7 @@ func (s *Service) CreateOrOpenDirectMessage(ctx context.Context, requesterID, ta
 		return CreateDMResult{}, ErrInvalidDMTarget
 	}
 
-	target, err := s.lookupActiveDMUser(ctx, targetUserID)
+	target, err := s.lookupActiveDMUserIncludingBots(ctx, targetUserID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return CreateDMResult{}, ErrBlockedDMTarget
@@ -824,19 +824,37 @@ func (s *Service) lookupActiveDMUser(ctx context.Context, userID uuid.UUID) (DMC
 		}
 		return DMCandidate{}, err
 	}
+	return s.dmCandidateFromLookupRow(row.ID, row.DisplayName, row.Email, row.AvatarUrl, row.CustomStatusText, row.CustomStatusEmoji, row.CustomStatusExpiresAt, row.Presence), nil
+}
+
+// lookupActiveDMUserIncludingBots is the bot-inclusive variant used where bots
+// are legitimate participants: the plaintext DM target lookup and the message
+// sender lookup. Requester lookups and the E2EE DM path keep excluding bots.
+func (s *Service) lookupActiveDMUserIncludingBots(ctx context.Context, userID uuid.UUID) (DMCandidate, error) {
+	row, err := s.q.LookupActiveDMUserIncludingBots(ctx, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return DMCandidate{}, sql.ErrNoRows
+		}
+		return DMCandidate{}, err
+	}
+	return s.dmCandidateFromLookupRow(row.ID, row.DisplayName, row.Email, row.AvatarUrl, row.CustomStatusText, row.CustomStatusEmoji, row.CustomStatusExpiresAt, row.Presence), nil
+}
+
+func (s *Service) dmCandidateFromLookupRow(id uuid.UUID, displayName, email, avatarURL string, customStatusText, customStatusEmoji string, customStatusExpiresAt sql.NullTime, presence string) DMCandidate {
 	return DMCandidate{
-		UserID:      row.ID,
-		DisplayName: row.DisplayName,
-		Email:       row.Email,
-		AvatarURL:   row.AvatarUrl,
+		UserID:      id,
+		DisplayName: displayName,
+		Email:       email,
+		AvatarURL:   avatarURL,
 		CustomStatus: userstatus.ActiveFromNullTime(
-			row.CustomStatusText,
-			row.CustomStatusEmoji,
-			row.CustomStatusExpiresAt,
+			customStatusText,
+			customStatusEmoji,
+			customStatusExpiresAt,
 			time.Now().UTC(),
 		),
-		Presence: row.Presence,
-	}, nil
+		Presence: presence,
+	}
 }
 
 func (s *Service) findAndRestoreExistingDirectMessage(

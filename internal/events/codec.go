@@ -153,6 +153,12 @@ func buildServerEventFromStored(
 			return nil, fmt.Errorf("decode task_status_changed payload: %w", err)
 		}
 		evt.Payload = &packetspb.ServerEvent_TaskStatusChanged{TaskStatusChanged: msg}
+	case packetspb.EventType_EVENT_TYPE_TASK_COMMENT_CREATED:
+		msg := &packetspb.TaskCommentCreatedEvent{}
+		if err := payloadUnmarshalOptions.Unmarshal(payloadJSON, msg); err != nil {
+			return nil, fmt.Errorf("decode task_comment_created payload: %w", err)
+		}
+		evt.Payload = &packetspb.ServerEvent_TaskCommentCreated{TaskCommentCreated: msg}
 	default:
 		return nil, fmt.Errorf("unsupported event_type %v", evtType)
 	}

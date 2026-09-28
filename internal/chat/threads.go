@@ -216,6 +216,126 @@ func (s *Service) SubscribeThread(ctx context.Context, p SubscribeThreadParams) 
 	}, nil
 }
 
+// ThreadReplayResult is a side-effect-free thread read.
+type ThreadReplayResult struct {
+	CurrentThreadSeq int64
+	ReplyCount       int32
+	Messages         []ConversationMessage
+}
+
+// ListThreadReplay returns thread replies strictly after afterThreadSeq,
+// ordered by thread_seq ASC, without touching thread_reads or read cursors.
+// It is the read-only counterpart of SubscribeThread, used by the bot API.
+func (s *Service) ListThreadReplay(ctx context.Context, requesterID, channelID, threadRootMessageID uuid.UUID, afterThreadSeq int64) (ThreadReplayResult, error) {
+	isMember, err := s.q.IsChannelMember(ctx, queries.IsChannelMemberParams{
+		ChannelID: channelID,
+		UserID:    requesterID,
+	})
+	if err != nil {
+		return ThreadReplayResult{}, fmt.Errorf("chat.ListThreadReplay membership check: %w", err)
+	}
+	if !isMember {
+		return ThreadReplayResult{}, ErrNotMember
+	}
+
+	threadChannelID, err := s.messageChannelByID(ctx, threadRootMessageID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ThreadReplayResult{}, ErrMessageNotFound
+		}
+		return ThreadReplayResult{}, fmt.Errorf("chat.ListThreadReplay resolve thread root: %w", err)
+	}
+	if threadChannelID != channelID {
+		return ThreadReplayResult{}, ErrInvalidThread
+	}
+
+	// Read-only tx so the handwritten hydration helpers share one snapshot;
+	// no thread_reads upsert and no read counters are written.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ThreadReplayResult{}, fmt.Errorf("chat.ListThreadReplay begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var nextThreadSeq int64
+	var replyCount int32
+	err = tx.QueryRow(ctx,
+		`SELECT next_thread_seq, reply_count
+		   FROM thread_summaries
+		  WHERE root_message_id = $1`,
+		threadRootMessageID,
+	).Scan(&nextThreadSeq, &replyCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		nextThreadSeq = 1
+		replyCount = 0
+	} else if err != nil {
+		return ThreadReplayResult{}, fmt.Errorf("chat.ListThreadReplay get summary: %w", err)
+	}
+
+	rows, err := s.q.ListThreadReplayMessages(ctx, queries.ListThreadReplayMessagesParams{
+		RootMessageID:  uuid.NullUUID{UUID: threadRootMessageID, Valid: true},
+		AfterThreadSeq: afterThreadSeq,
+	})
+	if err != nil {
+		return ThreadReplayResult{}, fmt.Errorf("chat.ListThreadReplay get messages: %w", err)
+	}
+
+	messageIDs := make([]uuid.UUID, 0, len(rows))
+	for _, row := range rows {
+		messageIDs = append(messageIDs, row.ID)
+	}
+	attachmentsByMessageID, err := s.loadMessageAttachmentsByMessageIDsTx(ctx, tx, messageIDs)
+	if err != nil {
+		return ThreadReplayResult{}, fmt.Errorf("chat.ListThreadReplay load attachments: %w", err)
+	}
+	entitiesByMessageID, err := s.loadMessageEntitiesByMessageIDsTx(ctx, tx, messageIDs)
+	if err != nil {
+		return ThreadReplayResult{}, fmt.Errorf("chat.ListThreadReplay load entities: %w", err)
+	}
+	reactionsByMessageID, err := s.loadReactionAggregatesByMessageIDsTx(ctx, tx, messageIDs)
+	if err != nil {
+		return ThreadReplayResult{}, fmt.Errorf("chat.ListThreadReplay load reactions: %w", err)
+	}
+	myReactionsByMessageID, err := s.loadUserReactionsByMessageIDsTx(ctx, tx, messageIDs, requesterID)
+	if err != nil {
+		return ThreadReplayResult{}, fmt.Errorf("chat.ListThreadReplay load my reactions: %w", err)
+	}
+
+	messages := make([]ConversationMessage, 0, len(rows))
+	for _, row := range rows {
+		item := ConversationMessage{
+			ID:              row.ID,
+			ConversationID:  row.ChannelID,
+			SenderID:        row.SenderID,
+			SenderName:      row.SenderName,
+			Body:            row.Body,
+			ChannelSeq:      row.ChannelSeq,
+			ThreadSeq:       row.ThreadSeq,
+			CreatedAt:       row.CreatedAt,
+			MentionEveryone: row.MentionEveryone,
+			ContentMode:     row.ContentMode,
+		}
+		if row.EditedAt.Valid {
+			editedAt := row.EditedAt.Time
+			item.EditedAt = &editedAt
+		}
+		if row.ThreadRootID.Valid {
+			item.ThreadRootMessageID = row.ThreadRootID.UUID
+		}
+		item.Entities = entitiesByMessageID[row.ID.String()]
+		item.Reactions = reactionsByMessageID[row.ID]
+		item.MyReactions = myReactionsByMessageID[row.ID]
+		item.Attachments = attachmentsByMessageID[row.ID]
+		messages = append(messages, item)
+	}
+
+	return ThreadReplayResult{
+		CurrentThreadSeq: nextThreadSeq - 1,
+		ReplyCount:       replyCount,
+		Messages:         messages,
+	}, nil
+}
+
 func (s *Service) rebuildThreadSummaryAfterReplyDeleteTx(
 	ctx context.Context,
 	tx pgx.Tx,

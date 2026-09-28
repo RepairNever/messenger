@@ -108,6 +108,12 @@ Key configuration options:
 | `VAPID_SUBJECT` | Web Push subject (`mailto:` or `https:`) | — |
 | `PUSH_RATE_LIMIT_WINDOW` | In-memory per-user push rate limit window | `1s` |
 | `PUSH_TTL_SECONDS` | Web Push TTL (seconds) | `60` |
+| `BOT_API_ENABLED` | Feature flag for the `/api/bot/v1` HTTP API (see [BOT_API.md](BOT_API.md)) | `true` |
+| `BOT_API_MAX_WAIT_SECONDS` | Server-side cap on `/api/bot/v1/events` `wait_seconds` | `30` |
+| `BOT_API_EVENTS_MAX_LIMIT` | Cap on `/api/bot/v1/events` `limit` | `500` |
+| `BOT_API_RATE_LIMIT_RPS` | Per-bot token bucket rate | `10` |
+| `BOT_API_RATE_LIMIT_BURST` | Per-bot token bucket burst | `20` |
+| `BOT_API_MAX_CONCURRENT_POLLS` | Concurrent `wait_seconds>0` event polls per bot | `2` |
 
 ## Project Structure
 
@@ -115,6 +121,7 @@ Key configuration options:
 cmd/server/              # Application entry point (single binary)
 internal/
   auth/                  # Authentication, JWT, user CRUD, avatar upload
+  botapi/                # Bot-facing HTTP API (/api/bot/v1: events long-poll, messaging, tasks)
   bootstrap/             # Paginated WS bootstrap (initial data load)
   calls/                 # LiveKit voice/video call management
   chat/                  # Messaging, reactions, threads, history

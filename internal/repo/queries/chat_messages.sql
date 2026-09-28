@@ -79,6 +79,17 @@ SELECT channel_id
 FROM messages
 WHERE id = @message_id;
 
+-- name: ListThreadReplayMessages :many
+SELECT m.id, m.channel_id, m.channel_seq, m.sender_id,
+       COALESCE(NULLIF(u.display_name, ''), u.email) AS sender_name, m.body,
+       m.thread_root_id, m.thread_seq, m.mention_everyone, m.edited_at, m.created_at,
+       m.content_mode
+FROM messages m
+JOIN users u ON u.id = m.sender_id
+WHERE m.thread_root_id = @root_message_id
+  AND m.thread_seq > @after_thread_seq
+ORDER BY m.thread_seq ASC;
+
 -- name: ListMessageContextRows :many
 WITH target AS (
   SELECT messages.id, messages.channel_seq

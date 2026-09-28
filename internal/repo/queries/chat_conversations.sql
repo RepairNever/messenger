@@ -9,7 +9,6 @@ SELECT id,
 FROM users
 WHERE id <> @requester_id
   AND status = 'active'
-  AND role <> 'bot'
 ORDER BY lower(COALESCE(NULLIF(display_name, ''), email)), id;
 
 -- name: ListAvailablePublicChannels :many
@@ -86,6 +85,21 @@ LEFT JOIN user_presence up
 WHERE id = @user_id
   AND u.status = 'active'
   AND u.role <> 'bot';
+
+-- name: LookupActiveDMUserIncludingBots :one
+SELECT u.id,
+       u.display_name,
+       u.email,
+       u.avatar_url,
+       u.custom_status_text,
+       u.custom_status_emoji,
+       u.custom_status_expires_at,
+       COALESCE(up.status, 'offline') AS presence
+FROM users u
+LEFT JOIN user_presence up
+  ON up.user_id = u.id
+WHERE id = @user_id
+  AND u.status = 'active';
 
 -- name: GetInvitableChannelByID :one
 SELECT id,

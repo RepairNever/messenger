@@ -81,6 +81,14 @@ type Config struct {
 	// Observability
 	MetricsPort string `mapstructure:"METRICS_PORT"`
 
+	// Bot API (/api/bot/v1)
+	BotAPIEnabled            bool `mapstructure:"BOT_API_ENABLED"`
+	BotAPIMaxWaitSeconds     int  `mapstructure:"BOT_API_MAX_WAIT_SECONDS"`
+	BotAPIEventsMaxLimit     int  `mapstructure:"BOT_API_EVENTS_MAX_LIMIT"`
+	BotAPIRateLimitRPS       int  `mapstructure:"BOT_API_RATE_LIMIT_RPS"`
+	BotAPIRateLimitBurst     int  `mapstructure:"BOT_API_RATE_LIMIT_BURST"`
+	BotAPIMaxConcurrentPolls int  `mapstructure:"BOT_API_MAX_CONCURRENT_POLLS"`
+
 	// CORS
 	CORSAllowedOrigins string `mapstructure:"CORS_ALLOWED_ORIGINS"` // comma-separated origins or "*"
 }
@@ -153,6 +161,13 @@ func Load() (*Config, error) {
 
 	viper.SetDefault("METRICS_PORT", "9090")
 	viper.SetDefault("CORS_ALLOWED_ORIGINS", "*")
+
+	viper.SetDefault("BOT_API_ENABLED", true)
+	viper.SetDefault("BOT_API_MAX_WAIT_SECONDS", 30)
+	viper.SetDefault("BOT_API_EVENTS_MAX_LIMIT", 500)
+	viper.SetDefault("BOT_API_RATE_LIMIT_RPS", 10)
+	viper.SetDefault("BOT_API_RATE_LIMIT_BURST", 20)
+	viper.SetDefault("BOT_API_MAX_CONCURRENT_POLLS", 2)
 
 	// Read .env file if present; ignore missing file
 	viper.ReadInConfig()

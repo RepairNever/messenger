@@ -16,6 +16,7 @@ import (
 	"msgnr/internal/admin"
 	"msgnr/internal/auth"
 	"msgnr/internal/bootstrap"
+	"msgnr/internal/botapi"
 	"msgnr/internal/calls"
 	"msgnr/internal/chat"
 	"msgnr/internal/config"
@@ -208,6 +209,16 @@ func main() {
 	integrationsSvc := integrations.NewService(db.Pool, tasksSvc, documentsSvc, log)
 	integrationsHandler := integrations.NewHandler(integrationsSvc, log)
 
+	var botSvc *botapi.Service
+	var botHandler *botapi.Handler
+	if cfg.BotAPIEnabled {
+		botSvc = botapi.NewService(
+			db.Pool, eventStore, eventBus,
+			chatSvc, tasksSvc, documentsSvc, searchSvc, integrationsSvc,
+			cfg, log)
+		botHandler = botapi.NewHandler(botSvc, log)
+	}
+
 	// --- main HTTP mux ---
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", wsServer.Handler())
@@ -223,6 +234,9 @@ func main() {
 	dayoffsHandler.RegisterRoutes(mux)
 	integrationsHandler.RegisterRoutes(mux)
 	pushHandler.RegisterRoutes(mux)
+	if botHandler != nil {
+		botHandler.RegisterRoutes(mux)
+	}
 
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
@@ -230,6 +244,11 @@ func main() {
 		ReadTimeout:  cfg.HTTPReadTimeout,
 		WriteTimeout: cfg.HTTPWriteTimeout,
 		IdleTimeout:  cfg.HTTPIdleTimeout,
+	}
+	if botSvc != nil {
+		// Wake parked /events long-polls on shutdown so Shutdown returns
+		// promptly instead of waiting out HTTPShutdownTimeout.
+		httpServer.RegisterOnShutdown(botSvc.Close)
 	}
 
 	// --- metrics HTTP server (separate port) ---

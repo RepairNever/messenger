@@ -50,6 +50,7 @@ var eventTypeToProto = map[string]packetspb.EventType{
 	"user_identity_updated":      packetspb.EventType_EVENT_TYPE_USER_IDENTITY_UPDATED,
 	"task_status_changed":        packetspb.EventType_EVENT_TYPE_TASK_STATUS_CHANGED,
 	"call_raised_hands_changed":  packetspb.EventType_EVENT_TYPE_CALL_RAISED_HANDS_CHANGED,
+	"task_comment_created":       packetspb.EventType_EVENT_TYPE_TASK_COMMENT_CREATED,
 }
 
 // protoToEventType is the reverse of eventTypeToProto.
@@ -172,6 +173,10 @@ func ValidateEventTypePayload(dbText string, evt *packetspb.ServerEvent) error {
 	case packetspb.EventType_EVENT_TYPE_DM_HISTORY_CLEARED:
 		if evt.GetDmHistoryCleared() == nil {
 			return fmt.Errorf("event_type %q requires dm_history_cleared payload", dbText)
+		}
+	case packetspb.EventType_EVENT_TYPE_TASK_COMMENT_CREATED:
+		if evt.GetTaskCommentCreated() == nil {
+			return fmt.Errorf("event_type %q requires task_comment_created payload", dbText)
 		}
 	}
 	return nil

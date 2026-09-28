@@ -19,7 +19,9 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protojson"
 
+	packetspb "msgnr/internal/gen/proto"
 	"msgnr/internal/gen/queries"
 	"msgnr/internal/tasks"
 	"msgnr/internal/testdb"
@@ -3704,6 +3706,140 @@ func TestIntegration_CommentThread_EnsureCreatesHiddenChannelAndRootOnce(t *test
 	require.Len(t, list, 1)
 	require.NotNil(t, list[0].ThreadRootMessageID)
 	assert.Equal(t, thread.ThreadRootMessageID, *list[0].ThreadRootMessageID)
+}
+
+func seedBotUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool, displayName string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	err := pool.QueryRow(ctx,
+		`INSERT INTO users (email, password_hash, display_name, role)
+		 VALUES ($1, 'x', $2, 'bot') RETURNING id`,
+		"tasks_bot_"+uuid.NewString()+"@example.com",
+		displayName,
+	).Scan(&id)
+	require.NoError(t, err)
+	return id
+}
+
+func isUnarchivedChannelMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool, channelID, userID uuid.UUID) bool {
+	t.Helper()
+	var isMember bool
+	err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM channel_members
+		 WHERE channel_id = $1 AND user_id = $2 AND is_archived = false)`,
+		channelID,
+		userID,
+	).Scan(&isMember)
+	require.NoError(t, err)
+	return isMember
+}
+
+func latestTaskCommentCreatedEvent(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (uuid.NullUUID, []byte) {
+	t.Helper()
+	var channelID uuid.NullUUID
+	var payloadJSON []byte
+	err := pool.QueryRow(ctx, `
+		SELECT channel_id, payload
+		  FROM workspace_events
+		 WHERE event_type = 'task_comment_created'
+		 ORDER BY event_seq DESC LIMIT 1`,
+	).Scan(&channelID, &payloadJSON)
+	require.NoError(t, err)
+	return channelID, payloadJSON
+}
+
+func TestIntegration_Comment_CreateEmitsTaskCommentCreatedEvent(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+	svc := tasks.NewService(pool, nil)
+	actor := seedUserProfile(t, ctx, pool, "comment_evt_"+uuid.NewString()+"@example.com", "Comment Author", "")
+	tpl := seedTemplate(t, ctx, svc, "TCE", actor)
+	status := seedStatus(t, ctx, svc, actor)
+	task := seedTask(t, ctx, svc, tpl.ID, status.ID, actor, "Comment event task")
+
+	comment, err := svc.CreateComment(ctx, task.ID, actor, "Hello from a human")
+	require.NoError(t, err)
+
+	// Before any thread exists the event carries no channel id: the frontend
+	// fanout treats it as workspace-wide, the bot stream admits it regardless.
+	channelID, payloadJSON := latestTaskCommentCreatedEvent(t, ctx, pool)
+	assert.False(t, channelID.Valid)
+
+	var evt packetspb.TaskCommentCreatedEvent
+	require.NoError(t, protojson.Unmarshal(payloadJSON, &evt))
+	assert.Equal(t, task.ID.String(), evt.TaskId)
+	assert.Equal(t, task.PublicID, evt.PublicId)
+	assert.Equal(t, comment.ID.String(), evt.CommentId)
+	assert.Equal(t, actor.String(), evt.AuthorId)
+	assert.Equal(t, "Comment Author", evt.AuthorName)
+	assert.Equal(t, "Hello from a human", evt.Body)
+	assert.Equal(t, int32(0), evt.AttachmentCount)
+	assert.Empty(t, evt.DiscussionChannelId)
+	assert.Empty(t, evt.ThreadRootMessageId)
+
+	thread, err := svc.EnsureCommentThread(ctx, task.ID, comment.ID, actor)
+	require.NoError(t, err)
+
+	// Once the task has a discussion channel, later comments scope to it.
+	_, err = svc.CreateComment(ctx, task.ID, actor, "After thread exists")
+	require.NoError(t, err)
+
+	channelID, payloadJSON = latestTaskCommentCreatedEvent(t, ctx, pool)
+	require.True(t, channelID.Valid)
+	assert.Equal(t, thread.ConversationID, channelID.UUID)
+
+	var evt2 packetspb.TaskCommentCreatedEvent
+	require.NoError(t, protojson.Unmarshal(payloadJSON, &evt2))
+	assert.Equal(t, thread.ConversationID.String(), evt2.DiscussionChannelId)
+	assert.Empty(t, evt2.ThreadRootMessageId)
+}
+
+func TestIntegration_CommentThread_EnsureAddsBotMembers(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+	svc := tasks.NewService(pool, nil)
+	human := seedUser(t, ctx, pool)
+	tpl := seedTemplate(t, ctx, svc, "TBM", human)
+	status := seedStatus(t, ctx, svc, human)
+	task := seedTask(t, ctx, svc, tpl.ID, status.ID, human, "Bot member task")
+
+	// Create the discussion channel before any bot user exists.
+	comment1, err := svc.CreateComment(ctx, task.ID, human, "first")
+	require.NoError(t, err)
+	thread, err := svc.EnsureCommentThread(ctx, task.ID, comment1.ID, human)
+	require.NoError(t, err)
+
+	// A bot seeded after channel creation is not a member yet.
+	bot := seedBotUser(t, ctx, pool, "Helpful Bot")
+	assert.False(t, isUnarchivedChannelMember(t, ctx, pool, thread.ConversationID, bot))
+
+	// Re-running EnsureCommentThread on the existing channel must add the bot.
+	comment2, err := svc.CreateComment(ctx, task.ID, human, "second")
+	require.NoError(t, err)
+	_, err = svc.EnsureCommentThread(ctx, task.ID, comment2.ID, human)
+	require.NoError(t, err)
+	assert.True(t, isUnarchivedChannelMember(t, ctx, pool, thread.ConversationID, bot))
+
+	// A human who deliberately left the hidden channel stays archived.
+	leaver := seedUserProfile(t, ctx, pool, "thread_leaver_"+uuid.NewString()+"@example.com", "Leaver", "")
+	_, err = pool.Exec(ctx, `INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)`, thread.ConversationID, leaver)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `UPDATE channel_members SET is_archived = true WHERE channel_id = $1 AND user_id = $2`, thread.ConversationID, leaver)
+	require.NoError(t, err)
+
+	comment3, err := svc.CreateComment(ctx, task.ID, human, "third")
+	require.NoError(t, err)
+	_, err = svc.EnsureCommentThread(ctx, task.ID, comment3.ID, human)
+	require.NoError(t, err)
+	assert.False(t, isUnarchivedChannelMember(t, ctx, pool, thread.ConversationID, leaver))
+
+	// A bot existing at channel-creation time is a member from the start.
+	task2 := seedTask(t, ctx, svc, tpl.ID, status.ID, human, "Bot member task 2")
+	comment4, err := svc.CreateComment(ctx, task2.ID, human, "fresh channel")
+	require.NoError(t, err)
+	thread2, err := svc.EnsureCommentThread(ctx, task2.ID, comment4.ID, human)
+	require.NoError(t, err)
+	assert.True(t, isUnarchivedChannelMember(t, ctx, pool, thread2.ConversationID, bot))
 }
 
 func TestIntegration_CommentThread_UpdateCommentSyncsRootBody(t *testing.T) {
