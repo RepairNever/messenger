@@ -29,6 +29,8 @@ import {
   type UpdateDocumentPayload,
 } from '@/services/http/documentsApi'
 import { tasksListUsers, type TaskUser } from '@/services/http/tasksApi'
+import { adminListUsers, type AdminUser } from '@/services/http/adminApi'
+import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
 import { userCustomStatusFromDto } from '@/types/userStatus'
 
@@ -57,6 +59,9 @@ export const useDocumentsStore = defineStore('documents', () => {
   const users = ref<TaskUser[]>([])
   const usersLoaded = ref(false)
   const usersLoading = ref(false)
+  const bots = ref<AdminUser[]>([])
+  const botsLoading = ref(false)
+  const botsError = ref<string | null>(null)
 
   const selectedDocumentRequestKey = ref('')
   const searchQuery = ref('')
@@ -120,6 +125,26 @@ export const useDocumentsStore = defineStore('documents', () => {
       usersLoaded.value = true
     } finally {
       usersLoading.value = false
+    }
+  }
+
+  async function loadBots() {
+    const authStore = useAuthStore()
+    const actorID = authStore.user?.id
+    const role = authStore.effectiveRole
+    bots.value = []
+    botsError.value = null
+    if (role !== 'admin' && role !== 'owner') return
+    if (botsLoading.value) return
+    botsLoading.value = true
+    try {
+      const rows = await adminListUsers()
+      if (authStore.user?.id !== actorID || authStore.effectiveRole !== role) return
+      bots.value = rows.filter(user => user.role === 'bot' && user.status === 'active')
+    } catch (e) {
+      botsError.value = e instanceof Error ? e.message : 'Failed to load bots'
+    } finally {
+      botsLoading.value = false
     }
   }
 
@@ -431,6 +456,9 @@ export const useDocumentsStore = defineStore('documents', () => {
     documentError,
     users,
     usersLoaded,
+    bots,
+    botsLoading,
+    botsError,
     memberTeamspaces,
     favoriteDocuments,
     searchQuery,
@@ -440,6 +468,7 @@ export const useDocumentsStore = defineStore('documents', () => {
     loadTeamspaces,
     loadSidebar,
     loadUsers,
+    loadBots,
     selectDocument,
     clearSelectedDocument,
     setSearchQuery,

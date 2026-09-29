@@ -1,7 +1,10 @@
 import { reactive } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TeamspacesView from '@/components/documents/TeamspacesView.vue'
+
+const authStoreMock = reactive({ effectiveRole: 'member' })
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => authStoreMock }))
 
 const documentsStoreMock = reactive({
   teamspaces: [] as any[],
@@ -9,6 +12,10 @@ const documentsStoreMock = reactive({
   teamspacesError: null as string | null,
   users: [] as any[],
   usersLoaded: true,
+  bots: [] as any[],
+  botsLoading: false,
+  botsError: null as string | null,
+  loadBots: vi.fn(async () => {}),
   loadTeamspaces: vi.fn(async () => {}),
   loadUsers: vi.fn(async () => {}),
   createTeamspace: vi.fn(),
@@ -29,6 +36,85 @@ describe('TeamspacesView', () => {
     documentsStoreMock.teamspacesError = null
     documentsStoreMock.users = []
     documentsStoreMock.usersLoaded = true
+    documentsStoreMock.bots = []
+    documentsStoreMock.botsLoading = false
+    documentsStoreMock.botsError = null
+    authStoreMock.effectiveRole = 'member'
+  })
+
+  it.each(['admin', 'owner'])('lets %s select bots in create and edit member lists', async (role) => {
+    authStoreMock.effectiveRole = role
+    documentsStoreMock.users = [{ id: 'human', display_name: 'Human', email: 'human@example.com' }]
+    documentsStoreMock.bots = [{ id: 'bot', display_name: 'Docs bot', email: 'bot@example.com' }]
+    const teamspace = {
+      id: 'space', name: 'Docs', is_private: false, is_member: true, can_manage: true,
+      members: [{ id: 'human' }], member_count: 1,
+    }
+    documentsStoreMock.teamspaces = [teamspace]
+    documentsStoreMock.createTeamspace.mockResolvedValue(teamspace)
+    documentsStoreMock.updateTeamspace.mockResolvedValue(teamspace)
+    const wrapper = mount(TeamspacesView, {
+      props: { selectedTeamspaceId: null }, global: { stubs: { Teleport: true, UserAvatar: true } },
+    })
+    const button = (label: string) => wrapper.findAll('button').find(item => item.text() === label)!
+
+    await button('Edit').trigger('click')
+    expect(documentsStoreMock.loadBots).toHaveBeenCalledOnce()
+    expect(wrapper.get('[data-testid="teamspace-member-bot"]').element.parentElement?.textContent).toContain('Bot')
+    await wrapper.get('[data-testid="teamspace-member-bot"]').setValue(true)
+    await button('Save').trigger('click')
+    await flushPromises()
+    expect(documentsStoreMock.updateTeamspace).toHaveBeenCalledWith('space', {
+      name: 'Docs', is_private: false, member_ids: ['human', 'bot'],
+    })
+
+    await wrapper.get('[data-testid="documents-create-teamspace"]').trigger('click')
+    await wrapper.get('input[placeholder="Engineering docs"]').setValue('New docs')
+    await wrapper.get('[data-testid="teamspace-member-bot"]').setValue(true)
+    await button('Create').trigger('click')
+    await flushPromises()
+    expect(documentsStoreMock.createTeamspace).toHaveBeenCalledWith({
+      name: 'New docs', is_private: false, member_ids: ['bot'],
+    })
+    wrapper.unmount()
+  })
+
+  it('hides bot candidates for non-admin owners and preserves existing bot membership on save', async () => {
+    documentsStoreMock.bots = [{ id: 'bot', display_name: 'Docs bot' }]
+    documentsStoreMock.teamspaces = [{
+      id: 'space', name: 'Docs', is_private: false, is_member: true, can_manage: true,
+      members: [{ id: 'bot' }], member_count: 1,
+    }]
+    documentsStoreMock.updateTeamspace.mockResolvedValue({ id: 'space' })
+    const wrapper = mount(TeamspacesView, {
+      props: { selectedTeamspaceId: null }, global: { stubs: { Teleport: true, UserAvatar: true } },
+    })
+    await wrapper.findAll('button').find(item => item.text() === 'Edit')!.trigger('click')
+    expect(wrapper.find('[data-testid="teamspace-member-bot"]').exists()).toBe(false)
+    await wrapper.get('input[placeholder="Engineering docs"]').setValue('Renamed')
+    await wrapper.findAll('button').find(item => item.text() === 'Save')!.trigger('click')
+    await flushPromises()
+    expect(documentsStoreMock.updateTeamspace).toHaveBeenCalledWith('space', {
+      name: 'Renamed', is_private: false, member_ids: ['bot'],
+    })
+    wrapper.unmount()
+  })
+
+  it('shows bot loading and retry states', async () => {
+    authStoreMock.effectiveRole = 'admin'
+    documentsStoreMock.botsLoading = true
+    const wrapper = mount(TeamspacesView, {
+      props: { selectedTeamspaceId: null }, global: { stubs: { Teleport: true } },
+    })
+    await wrapper.get('[data-testid="documents-create-teamspace"]').trigger('click')
+    expect(wrapper.text()).toContain('Loading bots...')
+    documentsStoreMock.botsLoading = false
+    documentsStoreMock.botsError = 'Failed to load bots'
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Failed to load bots')
+    await wrapper.findAll('button').find(item => item.text() === 'Retry')!.trigger('click')
+    expect(documentsStoreMock.loadBots).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
   })
 
   it('shows delete only for manageable teamspaces and confirms delete', async () => {

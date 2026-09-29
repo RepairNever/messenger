@@ -122,11 +122,15 @@ func seedTask(t *testing.T, ctx context.Context, pool *pgxpool.Pool, actorID uui
 func seedTeamspace(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerID uuid.UUID, memberIDs ...uuid.UUID) documents.TeamspaceRow {
 	t.Helper()
 	svc := documents.NewService(pool, nil)
+	var role string
+	if err := pool.QueryRow(ctx, `SELECT role FROM users WHERE id = $1`, ownerID).Scan(&role); err != nil {
+		t.Fatalf("get teamspace owner role: %v", err)
+	}
 	row, err := svc.CreateTeamspace(ctx, documents.CreateTeamspaceParams{
 		Name:      "Docs " + uuid.NewString(),
 		MemberIDs: memberIDs,
 		ActorID:   ownerID,
-	}, "member")
+	}, role)
 	if err != nil {
 		t.Fatalf("create teamspace: %v", err)
 	}
@@ -755,7 +759,7 @@ func TestHandler_CreateAndGetDocument(t *testing.T) {
 	ctx := context.Background()
 	mux := newMux(pool)
 
-	ownerID := seedUser(t, ctx, pool, "member", "active")
+	ownerID := seedUser(t, ctx, pool, "admin", "active")
 	botID := seedUser(t, ctx, pool, "bot", "active")
 	seedToken(t, ctx, pool, botID, "doc-token", false)
 	teamspace := seedTeamspace(t, ctx, pool, ownerID, botID)
@@ -802,7 +806,7 @@ func TestHandler_CreateDocumentRejectsParentTeamspaceMismatch(t *testing.T) {
 	ctx := context.Background()
 	mux := newMux(pool)
 
-	ownerID := seedUser(t, ctx, pool, "member", "active")
+	ownerID := seedUser(t, ctx, pool, "admin", "active")
 	botID := seedUser(t, ctx, pool, "bot", "active")
 	seedToken(t, ctx, pool, botID, "doc-token", false)
 	teamspaceA := seedTeamspace(t, ctx, pool, ownerID, botID)

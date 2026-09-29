@@ -2,6 +2,13 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDocumentsStore } from '@/stores/documents'
 
+const botMocks = vi.hoisted(() => ({
+  adminListUsers: vi.fn(),
+  auth: { effectiveRole: 'member', user: { id: 'actor' } },
+}))
+vi.mock('@/services/http/adminApi', () => ({ adminListUsers: botMocks.adminListUsers }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => botMocks.auth }))
+
 const documentsApiMocks = vi.hoisted(() => ({
   documentsCreateDocument: vi.fn(),
   documentsCreateTeamspace: vi.fn(),
@@ -42,6 +49,7 @@ describe('documents store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    botMocks.auth.effectiveRole = 'member'
     vi.useFakeTimers()
     documentsApiMocks.documentsDeleteDocument.mockResolvedValue(undefined)
     documentsApiMocks.documentsDeleteTeamspace.mockResolvedValue(undefined)
@@ -52,6 +60,52 @@ describe('documents store', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it.each(['admin', 'owner'])('loads only active bot candidates for %s', async role => {
+    botMocks.auth.effectiveRole = role
+    botMocks.adminListUsers.mockResolvedValue([
+      { id: 'active-bot', role: 'bot', status: 'active' },
+      { id: 'blocked-bot', role: 'bot', status: 'blocked' },
+      { id: 'human', role: 'member', status: 'active' },
+    ])
+    const store = useDocumentsStore()
+    await store.loadBots()
+    expect(store.bots.map(bot => bot.id)).toEqual(['active-bot'])
+    expect(store.users).toEqual([])
+  })
+
+  it('does not request admin users as a member and clears stale bots', async () => {
+    const store = useDocumentsStore()
+    store.bots = [{ id: 'stale' }] as any
+    await store.loadBots()
+    expect(botMocks.adminListUsers).not.toHaveBeenCalled()
+    expect(store.bots).toEqual([])
+  })
+
+  it('discards bots if the actor loses admin permission during loading', async () => {
+    botMocks.auth.effectiveRole = 'admin'
+    let resolve!: (rows: any[]) => void
+    botMocks.adminListUsers.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const store = useDocumentsStore()
+    const pending = store.loadBots()
+    botMocks.auth.effectiveRole = 'member'
+    resolve([{ id: 'bot', role: 'bot', status: 'active' }])
+    await pending
+    expect(store.bots).toEqual([])
+    expect(store.botsLoading).toBe(false)
+  })
+
+  it('exposes a bot loading error and allows retry', async () => {
+    botMocks.auth.effectiveRole = 'admin'
+    botMocks.adminListUsers.mockRejectedValueOnce(new Error('Unavailable'))
+    const store = useDocumentsStore()
+    await store.loadBots()
+    expect(store.botsError).toBe('Unavailable')
+    expect(store.botsLoading).toBe(false)
+    botMocks.adminListUsers.mockResolvedValueOnce([])
+    await store.loadBots()
+    expect(store.botsError).toBeNull()
   })
 
   it('clears the selected document when its teamspace is deleted', async () => {

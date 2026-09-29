@@ -2,6 +2,8 @@
 
 This document describes how developers should use the static-token integration endpoints exposed by the backend.
 
+> For the richer bot-facing surface (messaging, task comments, channel discovery, and the long-polling event stream under `/api/bot/v1/*`), see [BOT_API.md](BOT_API.md). Token provisioning is shared between the two APIs.
+
 ## Overview
 
 Integration endpoints live under `/api/integrations/*` and are intended for `bot` users only.

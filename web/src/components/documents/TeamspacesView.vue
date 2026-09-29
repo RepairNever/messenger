@@ -201,12 +201,13 @@
             <div v-if="!documentsStore.usersLoaded" class="text-xs text-gray-500">Loading users...</div>
             <div v-else class="max-h-64 space-y-2 overflow-y-auto rounded border border-chat-border bg-chat-input/50 p-2">
               <label
-                v-for="user in documentsStore.users"
+                v-for="user in availableMembers"
                 :key="user.id"
                 class="flex cursor-pointer items-center gap-3 rounded px-2 py-1.5 text-sm text-gray-200 hover:bg-white/5"
               >
                 <input
                   :checked="selectedMemberIds.includes(user.id)"
+                  :data-testid="`teamspace-member-${user.id}`"
                   type="checkbox"
                   class="h-4 w-4 rounded border-chat-border bg-chat-input"
                   @change="toggleMember(user.id)"
@@ -219,8 +220,14 @@
                   size="xs"
                 />
                 <span class="truncate">{{ user.display_name || user.email }}</span>
+                <span v-if="user.isBot" class="rounded border border-chat-border px-1.5 py-0.5 text-xs text-app-muted">Bot</span>
               </label>
             </div>
+            <p v-if="canAddBots && documentsStore.botsLoading" class="mt-2 text-xs text-app-muted">Loading bots...</p>
+            <p v-if="canAddBots && documentsStore.botsError" role="alert" class="mt-2 text-xs text-app-text">
+              {{ documentsStore.botsError }}
+              <button type="button" class="ml-2 text-accent underline" @click="documentsStore.loadBots()">Retry</button>
+            </p>
           </div>
 
           <p v-if="modalError" class="text-xs text-red-400">{{ modalError }}</p>
@@ -254,6 +261,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import UserAvatar from '@/components/UserAvatar.vue'
 import { userCustomStatusFromDto } from '@/types/userStatus'
 import { useDocumentsStore } from '@/stores/documents'
+import { useAuthStore } from '@/stores/auth'
+import type { TaskUser } from '@/services/http/tasksApi'
 import type { TeamspaceMemberPreview } from '@/services/http/documentsApi'
 
 const props = defineProps<{
@@ -266,6 +275,18 @@ const emit = defineEmits<{
 }>()
 
 const documentsStore = useDocumentsStore()
+const authStore = useAuthStore()
+const canAddBots = computed(() => authStore.effectiveRole === 'admin' || authStore.effectiveRole === 'owner')
+const availableMembers = computed<(TaskUser & { isBot: boolean })[]>(() => [
+  ...documentsStore.users.map(user => ({ ...user, isBot: false })),
+  ...(canAddBots.value ? documentsStore.bots.map(bot => ({
+    id: bot.id,
+    display_name: bot.display_name,
+    email: bot.email,
+    avatar_url: bot.avatar_url,
+    isBot: true,
+  })) : []),
+])
 const membersPopup = ref<{ teamspaceId: string; top: number; left: number } | null>(null)
 const modalOpen = ref(false)
 const modalSaving = ref(false)
@@ -294,6 +315,7 @@ onMounted(() => {
 })
 
 function openCreateModal() {
+  void documentsStore.loadBots()
   editingTeamspaceId.value = null
   form.name = ''
   form.is_private = false
@@ -306,6 +328,7 @@ function openCreateModal() {
 function openEditModal(teamspaceId: string) {
   const teamspace = documentsStore.teamspaces.find(item => item.id === teamspaceId)
   if (!teamspace) return
+  void documentsStore.loadBots()
   editingTeamspaceId.value = teamspaceId
   form.name = teamspace.name
   form.is_private = teamspace.is_private

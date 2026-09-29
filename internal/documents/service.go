@@ -233,6 +233,11 @@ func (s *Service) CreateTeamspace(ctx context.Context, params CreateTeamspacePar
 	}
 	defer tx.Rollback(ctx)
 
+	memberIDs := uniqueUserIDs(append(params.MemberIDs, params.ActorID))
+	if err := validateTeamspaceMemberAdditions(ctx, tx, memberIDs, nil, actorRole); err != nil {
+		return TeamspaceRow{}, err
+	}
+
 	var teamspaceID uuid.UUID
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO teamspace (name, owner_user_id, is_private)
@@ -243,7 +248,6 @@ func (s *Service) CreateTeamspace(ctx context.Context, params CreateTeamspacePar
 		return TeamspaceRow{}, classifyMutationError("create teamspace", err)
 	}
 
-	memberIDs := uniqueUserIDs(append(params.MemberIDs, params.ActorID))
 	for _, memberID := range memberIDs {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO teamspace_member (teamspace_id, user_id)
@@ -306,6 +310,9 @@ func (s *Service) UpdateTeamspace(ctx context.Context, teamspaceID uuid.UUID, pa
 	targetMembers := uniqueUserIDs(append(params.MemberIDs, ownerUserID))
 	currentMembers, err := listTeamspaceMemberIDs(ctx, tx, teamspaceID)
 	if err != nil {
+		return TeamspaceRow{}, err
+	}
+	if err := validateTeamspaceMemberAdditions(ctx, tx, targetMembers, currentMembers, params.ActorRole); err != nil {
 		return TeamspaceRow{}, err
 	}
 	for _, currentMemberID := range currentMembers {
@@ -1570,6 +1577,47 @@ func classifyMutationError(action string, err error) error {
 		}
 	}
 	return fmt.Errorf("documents: %s: %w", action, err)
+}
+
+// Keep validation in the membership transaction. Existing memberships may be
+// retained even when a bot is blocked or the editor is not an administrator.
+func validateTeamspaceMemberAdditions(ctx context.Context, q queryer, targetMembers, currentMembers []uuid.UUID, actorRole string) error {
+	added := make([]uuid.UUID, 0, len(targetMembers))
+	for _, id := range targetMembers {
+		if !slices.Contains(currentMembers, id) {
+			added = append(added, id)
+		}
+	}
+	if len(added) == 0 {
+		return nil
+	}
+
+	// The document service uses native pgx transactions; lock candidate user
+	// rows so roles and status cannot change between validation and insertion.
+	rows, err := q.Query(ctx, `SELECT role, status FROM users WHERE id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, added)
+	if err != nil {
+		return fmt.Errorf("documents: validate teamspace members: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var role, status string
+		if err := rows.Scan(&role, &status); err != nil {
+			return fmt.Errorf("documents: scan teamspace member role: %w", err)
+		}
+		if role != "bot" {
+			continue
+		}
+		if actorRole != "admin" && actorRole != "owner" {
+			return fmt.Errorf("%w: admin role required to add bots to a teamspace", ErrForbidden)
+		}
+		if status != "active" {
+			return fmt.Errorf("%w: only active bots can be added to a teamspace", ErrBadRequest)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("documents: iterate teamspace member roles: %w", err)
+	}
+	return nil
 }
 
 func canManageTeamspace(ownerUserID, actorID uuid.UUID, actorRole string) bool {
