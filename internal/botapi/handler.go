@@ -57,6 +57,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/bot/v1/tasks/", h.requireAuth(h.tasksRouter))
 	mux.HandleFunc("/api/bot/v1/search/messages", h.requireAuth(h.searchMessages))
 	mux.HandleFunc("/api/bot/v1/search/documents", h.requireAuth(h.searchDocuments))
+	mux.HandleFunc("/api/bot/v1/documents", h.requireAuth(h.documentsCollection))
 	mux.HandleFunc("/api/bot/v1/documents/", h.requireAuth(h.documentItem))
 }
 

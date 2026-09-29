@@ -206,6 +206,21 @@ type searchDocumentsResponse struct {
 
 // ---- documents ----
 
+type createDocumentRequest struct {
+	Title       string     `json:"title"`
+	Description *string    `json:"description"`
+	ParentID    *uuid.UUID `json:"parent_id"`
+	TeamspaceID uuid.UUID  `json:"teamspace_id"`
+}
+
+type createDocumentResponse struct {
+	ID          uuid.UUID  `json:"id"`
+	ParentID    *uuid.UUID `json:"parent_id"`
+	Title       string     `json:"title"`
+	Description *string    `json:"description"`
+	URL         string     `json:"url"`
+}
+
 type documentDTO struct {
 	ID              uuid.UUID       `json:"id"`
 	TeamspaceID     uuid.UUID       `json:"teamspace_id"`

@@ -1,6 +1,6 @@
 # Bot API
 
-This document describes the versioned HTTP API under `/api/bot/v1/*` that the external LLM Bot Service integrates over. The Bot Service consumes workspace events and acts in the workspace (posting replies, commenting on tasks) exclusively through these endpoints — **bots never open a WebSocket connection**; the event stream is HTTP long-polling (`GET /api/bot/v1/events`).
+This document describes the versioned HTTP API under `/api/bot/v1/*` that the external LLM Bot Service integrates over. The Bot Service consumes workspace events and acts in the workspace (posting replies, commenting on tasks, creating documents) exclusively through these endpoints — **bots never open a WebSocket connection**; the event stream is HTTP long-polling (`GET /api/bot/v1/events`).
 
 ## Authentication
 
@@ -243,7 +243,42 @@ This route is download-only. Direct task attachments, task-draft uploads, thumbn
 
 `attachments` lists files owned by this document, ordered by upload time then ID, or `[]` when empty. Download their bytes through `GET /api/bot/v1/attachments/{attachment_id}`. External image URLs in Markdown are not fetched or converted into attachments. Archived documents and documents in deleted teamspaces return `404`.
 
-Documents are read-only knowledge input for bots; document comments do not exist.
+### Create a document
+
+`POST /api/bot/v1/documents` — create a document as the authenticated bot user, using the same creation semantics as `POST /api/integrations/documents`.
+
+```json
+{
+  "title": "Weekly report",
+  "description": "# Weekly report\n\nFull Markdown report…",
+  "parent_id": null,
+  "teamspace_id": "6da26430-7321-4caf-b426-e6af0d7e890c"
+}
+```
+
+- `title` — required, nonblank; leading and trailing whitespace is trimmed.
+- `description` — Markdown body, stored verbatim as `content_markdown`; optional (omitted or `null` remains `null`, as in the Integration API). The chat message limit of 32000 runes does not apply to documents.
+- `parent_id` — optional UUID or `null`; the parent must belong to the target teamspace.
+- `teamspace_id` — required, nonzero UUID; the bot must already be a member of that teamspace.
+- Both `created_by` and `updated_by` are set to the authenticated bot user.
+
+Returns `201 Created`, with the Integration API document DTO plus `url`:
+
+```json
+{
+  "id": "2bc9d1f4-1361-49fa-81d8-38801d758a8c",
+  "parent_id": null,
+  "title": "Weekly report",
+  "description": "# Weekly report\n\nFull Markdown report…",
+  "url": "/documents/2bc9d1f4-1361-49fa-81d8-38801d758a8c"
+}
+```
+
+`url` is the canonical web path relative to the platform's web origin: `/documents/{id}`. A chat message can contain `[Read the report](/documents/2bc9d1f4-1361-49fa-81d8-38801d758a8c)`. For an absolute URL, resolve this path against the platform's web origin (which may differ from the API origin). Readers still need access to the document's teamspace.
+
+Errors use `{"error":"…"}`: `400` for invalid JSON, missing/blank title, missing/invalid IDs, or parent/teamspace mismatch; `403` when the bot is not a member of the target teamspace; `404` for a nonexistent/deleted teamspace or nonexistent/archived parent.
+
+Creation does not post a chat message automatically. Use `POST /api/bot/v1/messages` with the document link and the original conversation/thread anchor. Document creation has no idempotency key; retries can create another document. Document comments do not exist.
 
 ## Event stream
 
