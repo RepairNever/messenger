@@ -15,7 +15,7 @@ Authorization: Bearer <your-static-token>
 - `401 {"error":"missing token"}` when the header is absent.
 - `401 {"error":"invalid token"}` when the token is unknown, revoked, or not attached to an active bot user.
 
-All responses use the common error format `{"error": "message"}`. Path or query values that fail UUID parsing return `400 {"error":"invalid <x> id"}`.
+Errors use the common format `{"error": "message"}`. Successful attachment downloads return binary bytes; other successful responses are JSON. Path or query values that fail UUID parsing return `400 {"error":"invalid <x> id"}`.
 
 ## Rate limits
 
@@ -158,6 +158,43 @@ Message objects:
 
 `thread_reply_count` is populated only in channel mode. Messages inside end-to-end-encrypted DMs come back with an empty `body` and `content_mode: "dm_pairwise_signal_v1"` — E2EE content is not a bot surface; skip those messages.
 
+### Download an attachment
+
+`GET /api/bot/v1/attachments/{attachment_id}` — download the original bytes of a message, task-comment, or document attachment using the bot's static Bearer token.
+
+Discover `attachment_id` from a message history item's `attachments`, a task comment's `attachments`, or a document's `attachments`. All three REST arrays use this shape:
+
+```json
+{"attachment_id": "…uuid…", "file_name": "diagram.png", "mime_type": "image/png", "file_size": 1234}
+```
+
+The server resolves the owning resource from the ID. Access is checked on every download:
+
+| Kind | Required access |
+|---|---|
+| Message attachment | Active conversation membership (`channel_members.is_archived = false`). Public channels also require membership. Encrypted conversations/messages are forbidden even if the bot has a membership. |
+| Task-comment attachment | Same organization-wide access as `GET /tasks/{public_id}`. Discussion-channel membership is not required. |
+| Document attachment | Membership in the document's teamspace, matching document reads. Archived documents and deleted teamspaces are unavailable. |
+
+`200` returns the entire file, for images and non-images alike:
+
+```http
+Content-Type: image/png
+Content-Length: 1234
+Content-Disposition: attachment; filename=diagram.png
+Cache-Control: private, no-store
+X-Content-Type-Options: nosniff
+```
+
+`Content-Length` is the actual object's byte length. `Content-Type` uses storage metadata, then attachment metadata if empty, and finally `application/octet-stream`. The response has no JSON wrapper or base64 encoding. A vision client can construct `data:<Content-Type>;base64,<encoded downloaded bytes>` itself.
+
+- `403 {"error":"forbidden"}`: missing chat/teamspace membership or encrypted chat content.
+- `404 {"error":"not found"}`: unknown attachment, staged/unlinked upload, excluded attachment kind, deleted parent, archived document, or deleted teamspace.
+- `400 {"error":"invalid attachment id"}`: malformed UUID; unsupported methods return `405`.
+- Authentication and rate limits apply as above (`401`, `429`). Database/storage failures return `500 {"error":"internal error"}`; a missing storage object with an existing attachment row is a storage failure. Ambiguous IDs across included attachment kinds also fail with `500` and return no bytes.
+
+This route is download-only. Direct task attachments, task-draft uploads, thumbnails, range/resume downloads, and attachment upload/update/delete operations are outside this contract. There is no supported `variant` parameter.
+
 ### Get task context
 
 `GET /api/bot/v1/tasks/{public_id}` — same response shape as `GET /api/integrations/tasks/{public_id}` (template field metadata and status included). `404 {"error":"not found: task"}` for unknown ids.
@@ -167,8 +204,10 @@ Message objects:
 `GET /api/bot/v1/tasks/{public_id}/comments` — chronological.
 
 ```json
-{"comments": [{"id": "…uuid…", "task_id": "…uuid…", "author_id": "…uuid…", "author_name": "Bob", "body": "text", "thread_root_message_id": null, "created_at": "…", "updated_at": "…", "attachment_count": 0}]}
+{"comments": [{"id": "…uuid…", "task_id": "…uuid…", "author_id": "…uuid…", "author_name": "Bob", "body": "text", "thread_root_message_id": null, "created_at": "…", "updated_at": "…", "attachment_count": 1, "attachments": [{"attachment_id": "…uuid…", "file_name": "diagram.png", "mime_type": "image/png", "file_size": 1234}]}]}
 ```
+
+`attachment_count` is retained for compatibility. `attachments` is `[]` when empty and otherwise ordered by upload time, then ID. Attachment-only comments may have an empty `body`. Task comments and their files are organization-wide readable by authenticated bots, including bots that are not members of the task's discussion channel.
 
 ### Create a task comment
 
@@ -178,9 +217,9 @@ Message objects:
 {"body": "bot analysis here"}
 ```
 
-- `body` required, 1..32000 runes. The bot is the author; this also emits a `task_comment_created` event. Attachments are not part of the bot contract in v1.
+- `body` required, 1..32000 runes. The bot is the author; this also emits a `task_comment_created` event. Bots can discover and download existing attachments, but cannot upload or attach files when authoring comments in v1.
 
-`201` returns the created comment (same shape as the list items, `attachment_count: 0`).
+`201` returns the created comment (same shape as the list items, `attachment_count: 0`, `attachments: []`).
 
 ### Search messages
 
@@ -199,8 +238,10 @@ Message objects:
 `GET /api/bot/v1/documents/{id}` — read a knowledge-base document. `403` when the bot is not a member of the document's teamspace, `404` when it does not exist.
 
 ```json
-{"id": "…uuid…", "teamspace_id": "…uuid…", "parent_id": null, "title": "Onboarding Handbook", "content_markdown": "# …", "created_by": "…uuid…", "updated_by": "…uuid…", "created_at": "…", "updated_at": "…"}
+{"id": "…uuid…", "teamspace_id": "…uuid…", "parent_id": null, "title": "Onboarding Handbook", "content_markdown": "# …", "created_by": "…uuid…", "updated_by": "…uuid…", "created_at": "…", "updated_at": "…", "attachments": [{"attachment_id": "…uuid…", "file_name": "handbook.png", "mime_type": "image/png", "file_size": 1234}]}
 ```
+
+`attachments` lists files owned by this document, ordered by upload time then ID, or `[]` when empty. Download their bytes through `GET /api/bot/v1/attachments/{attachment_id}`. External image URLs in Markdown are not fetched or converted into attachments. Archived documents and documents in deleted teamspaces return `404`.
 
 Documents are read-only knowledge input for bots; document comments do not exist.
 
@@ -232,6 +273,10 @@ Documents are read-only knowledge input for bots; document comments do not exist
 ```
 
 `payload` is the JSON rendering of the protobuf event payload (`MessageEvent`, `TaskCommentCreatedEvent`, … — same shapes the web client consumes).
+
+Event payloads retain protobuf JSON camelCase names: a message event's `attachments` entries include `attachmentId`, `fileName`, `mimeType`, and `fileSize` (protobuf JSON encodes int64 sizes as strings). REST attachment metadata uses the snake_case names shown above and numeric `file_size`. Either ID can be used with the generic download route.
+
+`task_comment_created` carries `attachmentCount`, not a full attachment array. Fetch `GET /api/bot/v1/tasks/{publicId}/comments` using the event's `publicId`, locate its `commentId`, and read the comment's attachment IDs there.
 
 ### Which events are delivered
 

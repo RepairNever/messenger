@@ -6,6 +6,16 @@ WHERE channel_id = $1
   AND is_archived = false
 LIMIT 1;
 
+-- name: ListRealtimeConversationIDs :many
+-- Realtime authorization includes hidden channels; sidebar bootstrap does not.
+SELECT c.id
+FROM channels c
+JOIN channel_members cm ON cm.channel_id = c.id
+WHERE cm.user_id = @user_id
+  AND cm.is_archived = false
+  AND c.is_archived = false
+ORDER BY c.id;
+
 -- name: SetNotificationLevel :exec
 UPDATE channel_members
 SET notification_level = $3

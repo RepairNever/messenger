@@ -35,6 +35,7 @@ import type {
   CallInviteCreatedEvent,
   CallInviteCancelledEvent,
   TaskStatusChangedEvent,
+  TaskCommentCreatedEvent,
   NotificationResolvedEvent,
   NotificationSummary,
   ActiveCallSummary,
@@ -321,6 +322,8 @@ export interface TaskStatusChangedNotification {
 }
 
 export type TaskStatusChangedNotificationHandler = (evt: TaskStatusChangedNotification) => void
+
+export type TaskCommentCreatedHandler = (evt: TaskCommentCreatedEvent) => void
 
 export interface TypingState {
   userId: string
@@ -744,6 +747,7 @@ export const useChatStore = defineStore('chat', () => {
   let unreadFeedRefreshTimer: ReturnType<typeof setTimeout> | null = null
   const incomingMessageNotificationHandlers = new Set<IncomingMessageNotificationHandler>()
   const taskStatusChangedNotificationHandlers = new Set<TaskStatusChangedNotificationHandler>()
+  const taskCommentCreatedHandlers = new Set<TaskCommentCreatedHandler>()
   const DEBUG_CONVERSATION_OPEN_PERF = import.meta.env.DEV
 
   function persistThreadSummaries() {
@@ -1671,6 +1675,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingReadByConversation.clear()
     incomingMessageNotificationHandlers.clear()
     taskStatusChangedNotificationHandlers.clear()
+    taskCommentCreatedHandlers.clear()
 
     bootstrapStage = null
     bootstrapPresenceOverlay = new Map()
@@ -3444,6 +3449,15 @@ export const useChatStore = defineStore('chat', () => {
       case 'taskStatusChanged':
         emitTaskStatusChangedNotification(evt.payload.value)
         break
+      case 'taskCommentCreated':
+        for (const handler of taskCommentCreatedHandlers) {
+          try {
+            handler(evt.payload.value)
+          } catch {
+            // One consumer must not interrupt ordered event application.
+          }
+        }
+        break
       case 'messageAlert':
         applyMessageAlert(evt.payload.value)
         break
@@ -3739,6 +3753,11 @@ export const useChatStore = defineStore('chat', () => {
     return () => {
       taskStatusChangedNotificationHandlers.delete(handler)
     }
+  }
+
+  function onTaskCommentCreated(handler: TaskCommentCreatedHandler): () => void {
+    taskCommentCreatedHandlers.add(handler)
+    return () => { taskCommentCreatedHandlers.delete(handler) }
   }
 
   function emitTaskStatusChangedNotification(evt: TaskStatusChangedEvent) {
@@ -4606,6 +4625,7 @@ export const useChatStore = defineStore('chat', () => {
     setClientActive,
     onIncomingMessageNotification,
     onTaskStatusChanged,
+    onTaskCommentCreated,
     focusConversationMessage,
     focusThreadMessage,
     requestConversationComposerFocus,

@@ -766,16 +766,13 @@ func (s *Service) issueTokenPair(ctx context.Context, userID uuid.UUID, role, us
 	}, session.ID, nil
 }
 
-// ListAuthorizedConversationIDs returns the active conversation ids visible to
-// the user at the time the session cache is initialized.
+// ListAuthorizedConversationIDs returns active memberships, including hidden
+// channels, independently of which conversations appear in the sidebar.
 func (s *Service) ListAuthorizedConversationIDs(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
 	if s.queries == nil {
 		return nil, fmt.Errorf("auth: queries not configured")
 	}
-	return s.queries.ListBootstrapConversationIDs(ctx, queries.ListBootstrapConversationIDsParams{
-		UserID:          userID,
-		IncludeArchived: false,
-	})
+	return s.queries.ListRealtimeConversationIDs(ctx, userID)
 }
 
 // CanReceiveEventWithConversationAccess checks event visibility using a

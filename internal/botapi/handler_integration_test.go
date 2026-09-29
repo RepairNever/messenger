@@ -41,12 +41,14 @@ func hashToken(raw string) string {
 }
 
 type botTestEnv struct {
-	ts    *httptest.Server
-	pool  *pgxpool.Pool
-	chat  *chat.Service
-	tasks *tasks.Service
-	botID uuid.UUID
-	token string
+	ts          *httptest.Server
+	pool        *pgxpool.Pool
+	chat        *chat.Service
+	tasks       *tasks.Service
+	documents   *documents.Service
+	attachments *botAttachmentStore
+	botID       uuid.UUID
+	token       string
 }
 
 // newBotEnv provisions a bot user with an active integration token and a full
@@ -61,8 +63,10 @@ func newBotEnv(t *testing.T) *botTestEnv {
 	store := events.NewStore(pool)
 	bus := events.NewBus(log)
 	chatSvc := chat.NewService(pool, store)
-	tasksSvc := tasks.NewService(pool, nil)
-	documentsSvc := documents.NewService(pool, nil)
+	attachmentStore := newBotAttachmentStore()
+	chatSvc.ConfigureAttachments(attachmentStore, 50)
+	tasksSvc := tasks.NewService(pool, attachmentStore)
+	documentsSvc := documents.NewService(pool, attachmentStore)
 	searchSvc := search.NewService(pool)
 	integrationsSvc := integrations.NewService(pool, tasksSvc, documentsSvc, log)
 
@@ -98,12 +102,14 @@ func newBotEnv(t *testing.T) *botTestEnv {
 	require.NoError(t, err)
 
 	return &botTestEnv{
-		ts:    ts,
-		pool:  pool,
-		chat:  chatSvc,
-		tasks: tasksSvc,
-		botID: botID,
-		token: token,
+		ts:          ts,
+		pool:        pool,
+		chat:        chatSvc,
+		tasks:       tasksSvc,
+		documents:   documentsSvc,
+		attachments: attachmentStore,
+		botID:       botID,
+		token:       token,
 	}
 }
 
@@ -199,6 +205,7 @@ func TestIntegration_BotAPI_ChannelsDiscoverAndJoin(t *testing.T) {
 	env := newBotEnv(t)
 	human := env.seedHuman(t, "Channel Owner")
 	channelID := env.seedPublicChannel(t, human, "bot-lounge")
+	env.addMember(t, channelID, human)
 	otherID := env.seedPublicChannel(t, human, "bot-lounge-2")
 	env.addMember(t, otherID, env.botID) // already a member → not discoverable
 
@@ -439,12 +446,25 @@ func TestIntegration_BotAPI_SendMessageFlow(t *testing.T) {
 	assert.Equal(t, "Helpful Bot", reply["sender_name"])
 	assert.Equal(t, root.MessageID.String(), reply["thread_root_message_id"])
 
-	// Channel history mode with pagination metadata.
+	// Channel history contains the two roots, not the thread reply. Page one
+	// root at a time so this fixture actually exercises a continuation.
 	status, body = env.do(t, http.MethodGet,
-		fmt.Sprintf("/api/bot/v1/messages?conversation_id=%s&limit=2", channel), env.token, nil)
+		fmt.Sprintf("/api/bot/v1/messages?conversation_id=%s&limit=1", channel), env.token, nil)
 	require.Equal(t, http.StatusOK, status)
 	assert.Equal(t, true, body["has_more"])
-	assert.NotNil(t, body["next_before_channel_seq"])
+	require.NotNil(t, body["next_before_channel_seq"])
+	page := body["messages"].([]any)
+	require.Len(t, page, 1)
+	assert.Equal(t, root.MessageID.String(), page[0].(map[string]any)["id"])
+	before := int64(body["next_before_channel_seq"].(float64))
+	status, body = env.do(t, http.MethodGet,
+		fmt.Sprintf("/api/bot/v1/messages?conversation_id=%s&limit=1&before_channel_seq=%d", channel, before), env.token, nil)
+	require.Equal(t, http.StatusOK, status)
+	page = body["messages"].([]any)
+	require.Len(t, page, 1)
+	assert.Equal(t, messageID, page[0].(map[string]any)["id"])
+	assert.Equal(t, false, body["has_more"])
+	assert.Nil(t, body["next_before_channel_seq"])
 
 	// Thread replay of an unknown root.
 	status, _ = env.do(t, http.MethodGet,

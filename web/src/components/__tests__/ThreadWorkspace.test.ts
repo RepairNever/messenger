@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import { create } from '@bufbuild/protobuf'
-import { NotificationLevel, SubscribeThreadResponseSchema } from '@/shared/proto/packets_pb'
+import { EventType, MessageEventSchema, NotificationLevel, ServerEventSchema, SubscribeThreadResponseSchema } from '@/shared/proto/packets_pb'
 import ThreadWorkspace from '@/components/ThreadWorkspace.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
@@ -17,6 +17,49 @@ describe('ThreadWorkspace', () => {
       configurable: true,
       writable: true,
     })
+  })
+
+  it('renders live bot replies in a hidden thread without adding a sidebar conversation', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    chat.bootstrapped = true
+    ws.state = 'LIVE_SYNCED'
+    chat.registerUserIdentity('bot-id', 'Bot', undefined, '/bot.png')
+    chat.messages = { hidden: [{
+      id: 'hidden-root', channelId: 'hidden', senderId: 'bot-id', senderName: 'Bot',
+      senderAvatarUrl: '/bot.png', body: 'task comment', channelSeq: 1n, threadSeq: 0n,
+      mentionedUserIds: [], mentionEveryone: false, createdAt: '2026-09-29T12:00:00Z',
+      reactions: [], myReactions: [],
+    }] }
+    vi.spyOn(chat, 'ensureConversationHistory').mockResolvedValue(undefined)
+    vi.spyOn(ws, 'sendSubscribeThread').mockReturnValue(true)
+    const wrapper = mount(ThreadWorkspace, {
+      props: { conversationId: 'hidden', rootMessageId: 'hidden-root', mode: 'pinned' },
+      global: { stubs: {
+        MessageBubble: { props: ['message'], template: '<div data-testid="thread-message" :data-avatar="message.senderAvatarUrl">{{ message.senderName }}: {{ message.body }}</div>' },
+        MessageInput: true,
+      } },
+    })
+    await flushPromises()
+    expect(ws.sendSubscribeThread).toHaveBeenCalledWith('hidden', 'hidden-root', 0n)
+    const event = create(ServerEventSchema, {
+      eventSeq: 1n, eventId: 'hidden-reply-event', eventType: EventType.MESSAGE_CREATED,
+      conversationId: 'hidden', payload: { case: 'messageCreated', value: create(MessageEventSchema, {
+        conversationId: 'hidden', messageId: 'bot-reply', senderId: 'bot-id', body: 'live bot reply',
+        channelSeq: 2n, threadSeq: 1n, threadRootMessageId: 'hidden-root',
+      }) },
+    })
+    chat.handleServerEvent(event)
+    chat.handleServerEvent(event)
+    await flushPromises()
+    const messages = wrapper.findAll('[data-testid="thread-message"]')
+    expect(messages).toHaveLength(2)
+    expect(messages[1].text()).toBe('Bot: live bot reply')
+    expect(messages[1].attributes('data-avatar')).toBe('/bot.png')
+    expect(chat.channels).toEqual([])
+    wrapper.unmount()
+    chat.resetRuntimeState()
+    vi.restoreAllMocks()
   })
 
   it('does not auto-scroll new replies when user is away from bottom', async () => {

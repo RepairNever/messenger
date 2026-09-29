@@ -474,6 +474,68 @@ func TestFanout_ConversationCacheAllowsOrdinaryMessageWithoutFallback(t *testing
 	}
 }
 
+func TestFanout_NewHiddenDiscussionReachesExistingSessions(t *testing.T) {
+	bus := events.NewBus(zap.NewNop())
+	srv := newTestServer(bus)
+	srv.authSvc = &auth.Service{}
+	srv.authorizeEvent = func(_ context.Context, _ auth.Principal, _ *packetspb.ServerEvent) bool {
+		t.Fatal("membership events should grant access without DB fallback")
+		return false
+	}
+	member := testPrincipal()
+	outsider := testPrincipalWithUser(uuid.NewString(), uuid.NewString())
+	outputs := make([]chan outboundMsg, 3)
+	for i, principal := range []auth.Principal{member, member, outsider} {
+		_, conn := pipeConn(t)
+		outputs[i] = make(chan outboundMsg, 16)
+		unsubscribe, done := srv.startEventFanout(conn, principal, outputs[i], 16, newSessionState(nil, true, nil))
+		defer func() { unsubscribe(); <-done }()
+	}
+	hidden := uuid.NewString()
+	// Before a channel exists the task event is workspace-wide.
+	bus.Publish(&packetspb.ServerEvent{EventSeq: 1, Payload: &packetspb.ServerEvent_TaskCommentCreated{
+		TaskCommentCreated: &packetspb.TaskCommentCreatedEvent{TaskId: "task-1"},
+	}})
+	bus.Publish(&packetspb.ServerEvent{EventSeq: 2, ConversationId: hidden, Payload: &packetspb.ServerEvent_MembershipChanged{
+		MembershipChanged: &packetspb.MembershipChangedEvent{
+			ConversationId: hidden, UserId: member.UserID.String(), Action: packetspb.MembershipAction_MEMBERSHIP_ACTION_ADDED,
+		},
+	}})
+	// Publish immediately, without waiting for the writer goroutine. Access
+	// must already be granted when the next event passes the bus filter.
+	bus.Publish(&packetspb.ServerEvent{EventSeq: 3, ConversationId: hidden, Payload: &packetspb.ServerEvent_MessageCreated{
+		MessageCreated: &packetspb.MessageEvent{ConversationId: hidden, MessageId: "root"},
+	}})
+	bus.Publish(&packetspb.ServerEvent{EventSeq: 4, ConversationId: hidden, Payload: &packetspb.ServerEvent_TaskCommentCreated{
+		TaskCommentCreated: &packetspb.TaskCommentCreatedEvent{TaskId: "task-1", DiscussionChannelId: hidden},
+	}})
+	bus.Publish(&packetspb.ServerEvent{EventSeq: 5, ConversationId: hidden, Payload: &packetspb.ServerEvent_MessageCreated{
+		MessageCreated: &packetspb.MessageEvent{ConversationId: hidden, MessageId: "reply", ThreadRootMessageId: "root", ThreadSeq: 1},
+	}})
+	// Workspace-wide sentinel gives an ordering barrier for the outsider too.
+	bus.Publish(&packetspb.ServerEvent{EventSeq: 6})
+	for i, output := range outputs {
+		var seqs []int64
+		for {
+			select {
+			case msg := <-output:
+				seq := msg.env.GetServerEvent().GetEventSeq()
+				seqs = append(seqs, seq)
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for ordered fanout")
+			}
+			if seqs[len(seqs)-1] == 6 {
+				break
+			}
+		}
+		if i < 2 {
+			assert.Equal(t, []int64{1, 2, 3, 4, 5, 6}, seqs)
+		} else {
+			assert.Equal(t, []int64{1, 6}, seqs)
+		}
+	}
+}
+
 func TestFanout_ConversationUpsertFallbackPopulatesConversationCache(t *testing.T) {
 	bus := events.NewBus(zap.NewNop())
 	srv := newTestServer(bus)

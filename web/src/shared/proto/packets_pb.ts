@@ -2489,6 +2489,10 @@ export const ConversationRemovedEventSchema: GenMessage<ConversationRemovedEvent
  */
 export type MembershipChangedEvent = Message<"packets.v1.MembershipChangedEvent"> & {
   /**
+   * Includes hidden task discussion channels. ADDED/JOINED grants realtime
+   * access to the affected user's sessions without adding a sidebar entry.
+   * Emit before message events when creating or restoring membership.
+   *
    * @generated from field: string conversation_id = 1;
    */
   conversationId: string;
@@ -3234,6 +3238,10 @@ export const TaskStatusChangedEventSchema: GenMessage<TaskStatusChangedEvent> = 
  */
 export type TaskCommentCreatedEvent = Message<"packets.v1.TaskCommentCreatedEvent"> & {
   /**
+   * Invalidate the task's HTTP comment list to obtain full attachment and
+   * author metadata. Scoped to discussion_channel_id when one exists;
+   * otherwise workspace-wide. Consumers must tolerate replay/duplicates.
+   *
    * @generated from field: string task_id = 1;
    */
   taskId: string;

@@ -126,15 +126,15 @@
       >
         <UserAvatar
           :user-id="comment.author_id"
-          :display-name="authorName(comment.author_id)"
-          :avatar-url="authorAvatar(comment.author_id)"
+          :display-name="authorName(comment)"
+          :avatar-url="authorAvatar(comment)"
           :custom-status="authorCustomStatus(comment.author_id)"
           size="sm"
         />
 
         <div class="min-w-0 flex-1">
           <div class="mb-1 flex items-baseline gap-2">
-            <span class="text-sm font-medium text-gray-200">{{ authorName(comment.author_id) }}</span>
+            <span class="text-sm font-medium text-gray-200">{{ authorName(comment) }}</span>
             <span class="text-xs text-gray-500">{{ formatDatetime(comment.created_at) }}</span>
             <span
               v-if="isEditedComment(comment)"
@@ -472,12 +472,12 @@ import { usePinnedDialogsStore } from '@/stores/pinnedDialogs'
 import UserAvatar from '@/components/UserAvatar.vue'
 import { useComposerEmojiPicker } from '@/composables/useComposerEmojiPicker'
 import { useColorTheme } from '@/composables/useColorTheme'
+import { useTaskComments } from '@/composables/useTaskComments'
 import { renderMarkdownToHtml } from '@/utils/markdown'
 import { handleMarkdownLinkClick } from '@/utils/linkNavigation'
 import { userCustomStatusFromDto } from '@/types/userStatus'
 import RichTextComposer from '@/components/RichTextComposer.vue'
 import {
-  tasksListComments,
   tasksCreateComment,
   tasksUpdateComment,
   tasksEnsureCommentThread,
@@ -498,9 +498,7 @@ const authStore = useAuthStore()
 const pinnedDialogs = usePinnedDialogsStore()
 const { currentTheme } = useColorTheme()
 const emojiPickerAccentColor = computed(() => currentTheme.value.tokens.accent)
-const comments = ref<TaskComment[]>([])
-const loading = ref(false)
-const error = ref('')
+const { comments, loading, error, upsert: upsertComment } = useTaskComments(() => props.taskId)
 const newBody = ref('')
 const submitting = ref(false)
 const openingThreadCommentIds = ref(new Set<string>())
@@ -613,19 +611,6 @@ const editAttachButtonTitle = computed(() => {
   if (editAttachments.value.length >= MAX_ATTACHMENTS) return `Max ${MAX_ATTACHMENTS} attachments per comment`
   return 'Attach file'
 })
-
-async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    comments.value = sortCommentsNewestFirst(await tasksListComments(props.taskId))
-    preloadAttachmentUrls()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to load comments'
-  } finally {
-    loading.value = false
-  }
-}
 
 function openFilePicker() {
   fileInputEl.value?.click()
@@ -821,24 +806,26 @@ function preserveScrollOnComposerResize(deltaPx: number) {
 }
 
 async function submit() {
+  const taskId = props.taskId
   const body = newBody.value.trim()
   if ((!body && stagedAttachments.value.length === 0) || submitting.value || uploading.value) return
   submitting.value = true
   error.value = ''
   attachmentError.value = ''
   try {
-    const comment = await tasksCreateComment(props.taskId, {
+    const comment = await tasksCreateComment(taskId, {
       body,
       attachment_ids: stagedAttachments.value.map(item => item.id),
     })
-    comments.value = sortCommentsNewestFirst([comment, ...comments.value])
+    if (taskId !== props.taskId) return
+    upsertComment(comment)
     newBody.value = ''
     stagedAttachments.value = []
     closeEmojiPicker()
     preloadAttachmentUrls()
     tasksStore.loadUsers()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to post comment'
+    if (taskId === props.taskId) error.value = e instanceof Error ? e.message : 'Failed to post comment'
   } finally {
     submitting.value = false
   }
@@ -865,24 +852,24 @@ function scrollHighlightedCommentIntoView() {
 }
 
 async function openCommentThread(comment: TaskComment) {
+  const taskId = props.taskId
   if (openingThreadCommentIds.value.has(comment.id)) return
   openingThreadCommentIds.value.add(comment.id)
   error.value = ''
   try {
-    const thread = await tasksEnsureCommentThread(props.taskId, comment.id)
-    comments.value = comments.value.map(item => item.id === comment.id
-      ? {
-          ...item,
-          thread_root_message_id: thread.thread_root_message_id,
-          thread_reply_count: thread.reply_count,
-        }
-      : item)
+    const thread = await tasksEnsureCommentThread(taskId, comment.id)
+    if (taskId !== props.taskId) return
+    upsertComment({
+      ...(comments.value.find(item => item.id === comment.id) ?? comment),
+      thread_root_message_id: thread.thread_root_message_id,
+      thread_reply_count: thread.reply_count,
+    })
     const title = tasksStore.selectedTask?.public_id
       ? `Task ${tasksStore.selectedTask.public_id}`
       : 'Task'
     pinnedDialogs.ensureThreadPinned(thread.conversation_id, thread.thread_root_message_id, title)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to open thread'
+    if (taskId === props.taskId) error.value = e instanceof Error ? e.message : 'Failed to open thread'
   } finally {
     openingThreadCommentIds.value.delete(comment.id)
   }
@@ -918,17 +905,19 @@ async function cancelEditingComment() {
 }
 
 async function saveEditingComment() {
+  const taskId = props.taskId
   const commentId = editingCommentId.value
   if (!commentId || !canSaveEditedComment.value) return
   editSaving.value = true
   editError.value = ''
   editAttachmentError.value = ''
   try {
-    const updated = await tasksUpdateComment(props.taskId, commentId, {
+    const updated = await tasksUpdateComment(taskId, commentId, {
       body: editBody.value.trim(),
       attachment_ids: editAttachments.value.map(item => item.id),
     })
-    comments.value = comments.value.map(comment => (comment.id === commentId ? updated : comment))
+    if (taskId !== props.taskId) return
+    upsertComment(updated)
     closeEditEmojiPicker()
     editingCommentId.value = null
     editBody.value = ''
@@ -936,33 +925,25 @@ async function saveEditingComment() {
     preloadAttachmentUrls()
     void tasksStore.loadUsers()
   } catch (e) {
-    editError.value = e instanceof Error ? e.message : 'Failed to update comment'
+    if (taskId === props.taskId) editError.value = e instanceof Error ? e.message : 'Failed to update comment'
   } finally {
     editSaving.value = false
   }
 }
 
-function authorName(authorId: string): string {
-  const user = tasksStore.users.find(u => u.id === authorId)
-  return user?.display_name ?? authorId.slice(0, 8)
+function authorName(comment: TaskComment): string {
+  const user = tasksStore.users.find(u => u.id === comment.author_id)
+  return comment.author_name || user?.display_name || comment.author_id.slice(0, 8)
 }
 
-function authorAvatar(authorId: string): string {
-  const user = tasksStore.users.find(u => u.id === authorId)
-  return user?.avatar_url ?? ''
+function authorAvatar(comment: TaskComment): string {
+  const user = tasksStore.users.find(u => u.id === comment.author_id)
+  return comment.author_avatar_url ?? user?.avatar_url ?? ''
 }
 
 function authorCustomStatus(authorId: string) {
   const user = tasksStore.users.find(u => u.id === authorId)
   return userCustomStatusFromDto(user?.custom_status)
-}
-
-function sortCommentsNewestFirst(items: TaskComment[]): TaskComment[] {
-  return [...items].sort((a, b) => {
-    const createdA = new Date(a.created_at).getTime()
-    const createdB = new Date(b.created_at).getTime()
-    return createdB - createdA
-  })
 }
 
 function formatDatetime(v: string): string {
@@ -1073,8 +1054,8 @@ watch(comments, () => {
   preloadAttachmentUrls()
 }, { deep: true })
 
-watch(() => [highlightedCommentId.value, comments.value.length] as const, async () => {
-  if (!highlightedCommentId.value) return
+watch(() => [highlightedCommentId.value, comments.value.length, loading.value] as const, async () => {
+  if (!highlightedCommentId.value || loading.value) return
   await nextTick()
   scrollHighlightedCommentIntoView()
 }, { immediate: true })
@@ -1094,7 +1075,6 @@ watch(() => props.taskId, (next, prev) => {
     editAttachmentError.value = ''
     editDragOver.value = false
     closeImagePreview()
-    void load()
   }
 })
 
@@ -1107,7 +1087,6 @@ watch(() => imagePreview.open, (open) => {
 })
 
 onMounted(() => {
-  void load()
   void tasksStore.loadUsers()
 })
 

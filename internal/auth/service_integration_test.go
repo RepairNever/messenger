@@ -121,6 +121,33 @@ func TestIntegration_CanReceiveEvent_CallEventsAllowActiveParticipant(t *testing
 	assert.False(t, svc.CanReceiveEvent(ctx, principal, messageEvent))
 }
 
+func TestIntegration_RealtimeAccessIncludesHiddenChannels(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+	userID := seedAuthCallUser(t, ctx, pool, "Viewer")
+	otherID := seedAuthCallUser(t, ctx, pool, "Other")
+	visible := seedAuthDMConversation(t, ctx, pool, userID)
+	hidden := seedAuthDMConversation(t, ctx, pool, userID)
+	archived := seedAuthDMConversation(t, ctx, pool, userID)
+	left := seedAuthDMConversation(t, ctx, pool, userID)
+	for _, id := range []uuid.UUID{visible, hidden, archived, left} {
+		seedAuthConversationMember(t, ctx, pool, id, userID)
+	}
+	_, err := pool.Exec(ctx, `UPDATE channels SET hidden = true WHERE id = $1`, hidden)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `UPDATE channels SET is_archived = true WHERE id = $1`, archived)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `UPDATE channel_members SET is_archived = true WHERE channel_id = $1`, left)
+	require.NoError(t, err)
+	svc := authsvc.NewService(nil, nil, nil, pool, 0, nil)
+	ids, err := svc.ListAuthorizedConversationIDs(ctx, userID)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uuid.UUID{visible, hidden}, ids)
+	ids, err = svc.ListAuthorizedConversationIDs(ctx, otherID)
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+}
+
 func TestIntegration_CanReceiveEvent_CallStateChangedDeniesNonParticipant(t *testing.T) {
 	pool, _ := testdb.New(t)
 	ctx := context.Background()

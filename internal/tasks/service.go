@@ -371,6 +371,8 @@ type CommentRow struct {
 	ID                  uuid.UUID              `json:"id"`
 	TaskID              uuid.UUID              `json:"task_id"`
 	AuthorID            uuid.UUID              `json:"author_id"`
+	AuthorName          string                 `json:"author_name"`
+	AuthorAvatarURL     string                 `json:"author_avatar_url"`
 	ThreadRootMessageID *uuid.UUID             `json:"thread_root_message_id,omitempty"`
 	ThreadReplyCount    int                    `json:"thread_reply_count"`
 	Body                string                 `json:"body"`
@@ -5170,17 +5172,17 @@ func (s *Service) CreateComment(ctx context.Context, taskID, authorID uuid.UUID,
 		}
 	}
 
-	var authorName string
+	var authorName, authorAvatarURL string
 	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(NULLIF(display_name, ''), email)
+		SELECT COALESCE(NULLIF(display_name, ''), email), avatar_url
 		  FROM users
 		 WHERE id = $1`,
 		authorID,
-	).Scan(&authorName); err != nil {
+	).Scan(&authorName, &authorAvatarURL); err != nil {
 		return nil, fmt.Errorf("tasks: load comment author name: %w", err)
 	}
 
-	var out CommentRow
+	out := CommentRow{AuthorName: authorName, AuthorAvatarURL: authorAvatarURL}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO task_comment (task_id, author_id, body)
 		VALUES ($1, $2, $3)
@@ -5564,19 +5566,6 @@ func (s *Service) EnsureCommentThread(ctx context.Context, taskID, commentID, ac
 		).Scan(&channelID); err != nil {
 			return nil, fmt.Errorf("tasks: create hidden task discussion channel: %w", err)
 		}
-		// Bots are included so comment-thread replies reach them through the
-		// membership-filtered bot event stream.
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO channel_members (channel_id, user_id)
-			SELECT $1, u.id
-			  FROM users u
-			 WHERE u.status = 'active'
-			ON CONFLICT (channel_id, user_id) DO UPDATE
-			    SET is_archived = false`,
-			channelID,
-		); err != nil {
-			return nil, fmt.Errorf("tasks: add hidden task channel members: %w", err)
-		}
 		if _, err := tx.Exec(ctx, `SET LOCAL msgnr.preserve_task_updated_at = 'on'`); err != nil {
 			return nil, fmt.Errorf("tasks: preserve task updated_at setting: %w", err)
 		}
@@ -5589,32 +5578,9 @@ func (s *Service) EnsureCommentThread(ctx context.Context, taskID, commentID, ac
 		); err != nil {
 			return nil, fmt.Errorf("tasks: link hidden task discussion channel: %w", err)
 		}
-	} else {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO channel_members (channel_id, user_id)
-			VALUES ($1, $2)
-			ON CONFLICT (channel_id, user_id) DO UPDATE
-			    SET is_archived = false`,
-			channelID,
-			actorID,
-		); err != nil {
-			return nil, fmt.Errorf("tasks: ensure requester task channel membership: %w", err)
-		}
-		// Unlike humans, bots never deliberately leave the hidden channel, so
-		// re-add any missing bot. This also retroactively covers channels
-		// created before bots were included.
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO channel_members (channel_id, user_id)
-			SELECT $1, u.id
-			  FROM users u
-			 WHERE u.status = 'active'
-			   AND u.role = 'bot'
-			ON CONFLICT (channel_id, user_id) DO UPDATE
-			    SET is_archived = false`,
-			channelID,
-		); err != nil {
-			return nil, fmt.Errorf("tasks: ensure bot task channel membership: %w", err)
-		}
+	}
+	if err := s.ensureDiscussionMembersTx(ctx, tx, channelID, actorID, !discussionChannelID.Valid); err != nil {
+		return nil, err
 	}
 
 	rootID := threadRootMessageID.UUID
@@ -5690,6 +5656,47 @@ func (s *Service) EnsureCommentThread(ctx context.Context, taskID, commentID, ac
 		ThreadRootMessageID: rootID,
 		ThreadReplyCount:    replyCount,
 	}, nil
+}
+
+// Keep membership changes and their events in the same pgx transaction as the
+// thread root. The sqlc queries use database/sql and cannot share this tx.
+func (s *Service) ensureDiscussionMembersTx(ctx context.Context, tx pgx.Tx, channelID, actorID uuid.UUID, includeAll bool) error {
+	rows, err := tx.Query(ctx, `
+		INSERT INTO channel_members (channel_id, user_id)
+		SELECT $1, u.id
+		  FROM users u
+		 WHERE u.status = 'active'
+		   AND ($3::bool OR u.id = $2 OR u.role = 'bot')
+		 ORDER BY u.id
+		ON CONFLICT (channel_id, user_id) DO UPDATE
+		    SET is_archived = false
+		  WHERE channel_members.is_archived = true
+		RETURNING user_id`, channelID, actorID, includeAll)
+	if err != nil {
+		return fmt.Errorf("tasks: ensure discussion members: %w", err)
+	}
+	memberIDs, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return fmt.Errorf("tasks: collect discussion members: %w", err)
+	}
+	// Existing channels restore only the actor and bots. Other humans who left
+	// remain archived. Unchanged members must not generate duplicate events.
+	for _, userID := range memberIDs {
+		payload := &packetspb.MembershipChangedEvent{
+			ConversationId: channelID.String(),
+			UserId:         userID.String(),
+			Action:         packetspb.MembershipAction_MEMBERSHIP_ACTION_ADDED,
+		}
+		wrapper := &packetspb.ServerEvent{
+			EventType:      packetspb.EventType_EVENT_TYPE_MEMBERSHIP_CHANGED,
+			ConversationId: channelID.String(),
+			Payload:        &packetspb.ServerEvent_MembershipChanged{MembershipChanged: payload},
+		}
+		if err := s.appendAndNotifyTx(ctx, tx, "membership_changed", channelID.String(), payload, wrapper); err != nil {
+			return fmt.Errorf("tasks: emit discussion membership: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *Service) appendAndNotifyTx(
@@ -5915,6 +5922,8 @@ func mapCommentListRow(row queries.TaskCommentListWithAttachmentsRow) (CommentRo
 		row.ID,
 		row.TaskID,
 		row.AuthorID,
+		row.AuthorName,
+		row.AuthorAvatarUrl,
 		row.ThreadRootMessageID,
 		row.ThreadReplyCount,
 		row.Body,
@@ -5929,6 +5938,8 @@ func mapCommentGetRow(row queries.TaskCommentGetWithAttachmentsRow) (CommentRow,
 		row.ID,
 		row.TaskID,
 		row.AuthorID,
+		row.AuthorName,
+		row.AuthorAvatarUrl,
 		row.ThreadRootMessageID,
 		row.ThreadReplyCount,
 		row.Body,
@@ -5940,6 +5951,7 @@ func mapCommentGetRow(row queries.TaskCommentGetWithAttachmentsRow) (CommentRow,
 
 func mapCommentWithAttachments(
 	id, taskID, authorID uuid.UUID,
+	authorName, authorAvatarURL string,
 	threadRootMessageID uuid.NullUUID,
 	threadReplyCount int,
 	body string,
@@ -5950,6 +5962,8 @@ func mapCommentWithAttachments(
 		ID:               id,
 		TaskID:           taskID,
 		AuthorID:         authorID,
+		AuthorName:       authorName,
+		AuthorAvatarURL:  authorAvatarURL,
 		ThreadReplyCount: threadReplyCount,
 		Body:             body,
 		CreatedAt:        createdAt,

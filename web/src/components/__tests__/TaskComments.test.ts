@@ -7,6 +7,11 @@ import RichTextComposer from '@/components/RichTextComposer.vue'
 import router from '@/router'
 import { useAuthStore } from '@/stores/auth'
 import { usePinnedDialogsStore } from '@/stores/pinnedDialogs'
+import { useChatStore } from '@/stores/chat'
+import { useWsStore } from '@/stores/ws'
+import UserAvatar from '@/components/UserAvatar.vue'
+import { create } from '@bufbuild/protobuf'
+import { EventType, ServerEventSchema, TaskCommentCreatedEventSchema } from '@/shared/proto/packets_pb'
 import {
   tasksCreateComment,
   tasksEnsureCommentThread,
@@ -96,6 +101,45 @@ describe('TaskComments', () => {
   function mainComposer(wrapper: ReturnType<typeof mount>) {
     return wrapper.getComponent(RichTextComposer)
   }
+
+  it('renders a live bot comment with its avatar and attachments while preserving the draft', async () => {
+    const chat = useChatStore()
+    chat.bootstrapped = true
+    useWsStore().state = 'LIVE_SYNCED'
+    const wrapper = mount(TaskComments, { props: { taskId: 'task-1' } })
+    await waitForComposer(wrapper)
+    await insertMainText(wrapper, 'draft stays here')
+    vi.mocked(tasksListComments).mockResolvedValue([{
+      id: 'bot-comment', task_id: 'task-1', author_id: '5ccd56cc-3a73-4ae3-95e8-213023ea802d',
+      author_name: 'Bot', author_avatar_url: '/bot.png',
+      body: '**hello** <img src=x onerror=alert(1)>',
+      created_at: '2026-09-29T12:00:00Z', updated_at: '2026-09-29T12:00:00Z',
+      attachments: [{ id: 'bot-file', task_id: 'task-1', comment_id: 'bot-comment', file_name: 'report.txt',
+        file_size: 100, mime_type: 'text/plain', uploaded_by: 'bot-id', created_at: '2026-09-29T12:00:00Z' }],
+    }])
+    const event = create(ServerEventSchema, {
+      eventSeq: 1n, eventId: 'bot-event', eventType: EventType.TASK_COMMENT_CREATED,
+      payload: { case: 'taskCommentCreated', value: create(TaskCommentCreatedEventSchema, {
+        taskId: 'task-1', commentId: 'bot-comment',
+      }) },
+    })
+    chat.handleServerEvent(event)
+    await flushPromises()
+    const row = wrapper.get('[data-task-comment-id="bot-comment"]')
+    expect(row.text()).toContain('Bot')
+    expect(row.text()).not.toContain('5ccd56cc')
+    expect(row.text()).toContain('report.txt')
+    expect(row.find('.markdown-body strong').text()).toBe('hello')
+    expect(row.find('.markdown-body img').exists()).toBe(false)
+    expect(row.findComponent(UserAvatar).props('avatarUrl')).toBe('/bot.png')
+    expect(mainEditor(wrapper).getText()).toBe('draft stays here')
+    expect(chat.resolveDisplayName('5ccd56cc-3a73-4ae3-95e8-213023ea802d')).toBe('Bot')
+    chat.handleServerEvent(event)
+    await flushPromises()
+    expect(wrapper.findAll('[data-task-comment-id="bot-comment"]')).toHaveLength(1)
+    wrapper.unmount()
+    chat.resetRuntimeState()
+  })
 
   function mainEditor(wrapper: ReturnType<typeof mount>) {
     return (mainComposer(wrapper).vm as unknown as { getEditor: () => any }).getEditor()

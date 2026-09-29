@@ -53,6 +53,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/bot/v1/conversations", h.requireAuth(h.conversationsList))
 	mux.HandleFunc("/api/bot/v1/conversations/", h.requireAuth(h.conversationsRouter))
 	mux.HandleFunc("/api/bot/v1/messages", h.requireAuth(h.messages))
+	mux.HandleFunc("/api/bot/v1/attachments/", h.requireAuth(h.attachmentDownload))
 	mux.HandleFunc("/api/bot/v1/tasks/", h.requireAuth(h.tasksRouter))
 	mux.HandleFunc("/api/bot/v1/search/messages", h.requireAuth(h.searchMessages))
 	mux.HandleFunc("/api/bot/v1/search/documents", h.requireAuth(h.searchDocuments))
@@ -552,6 +553,11 @@ func (h *Handler) taskComments(w http.ResponseWriter, r *http.Request, p auth.Pr
 			CreatedAt:       row.CreatedAt,
 			UpdatedAt:       row.UpdatedAt,
 			AttachmentCount: row.AttachmentCount,
+			Attachments:     []attachmentDTO{},
+		}
+		if err := json.Unmarshal(row.Attachments, &dto.Attachments); err != nil {
+			h.internalError(w, "task comment attachments", err)
+			return
 		}
 		if row.ThreadRootMessageID.Valid {
 			rootID := row.ThreadRootMessageID.UUID
@@ -604,6 +610,12 @@ func (h *Handler) taskCommentCreate(w http.ResponseWriter, r *http.Request, p au
 		CreatedAt:       comment.CreatedAt,
 		UpdatedAt:       comment.UpdatedAt,
 		AttachmentCount: len(comment.Attachments),
+		Attachments:     make([]attachmentDTO, 0, len(comment.Attachments)),
+	}
+	for _, a := range comment.Attachments {
+		dto.Attachments = append(dto.Attachments, attachmentDTO{
+			AttachmentID: a.ID.String(), FileName: a.FileName, MimeType: a.MimeType, FileSize: a.FileSize,
+		})
 	}
 	if comment.ThreadRootMessageID != nil {
 		rootID := *comment.ThreadRootMessageID
@@ -726,15 +738,19 @@ func (h *Handler) documentItem(w http.ResponseWriter, r *http.Request, p auth.Pr
 	}
 	doc, err := h.svc.documentsSvc.GetDocument(r.Context(), documentID, p.UserID)
 	if err != nil {
-		switch {
-		case errors.Is(err, documents.ErrForbidden):
-			httputil.WriteJSON(w, http.StatusForbidden, httputil.ErrorBody(err.Error()))
-		case errors.Is(err, documents.ErrNotFound):
-			httputil.WriteJSON(w, http.StatusNotFound, httputil.ErrorBody(err.Error()))
-		default:
-			h.internalError(w, "document item", err)
-		}
+		h.documentServiceError(w, err)
 		return
+	}
+	rows, err := h.svc.documentsSvc.ListAttachments(r.Context(), documentID, p.UserID)
+	if err != nil {
+		h.documentServiceError(w, err)
+		return
+	}
+	attachments := make([]attachmentDTO, 0, len(rows))
+	for _, a := range rows {
+		attachments = append(attachments, attachmentDTO{
+			AttachmentID: a.ID.String(), FileName: a.FileName, MimeType: a.MimeType, FileSize: a.FileSize,
+		})
 	}
 	httputil.WriteJSON(w, http.StatusOK, documentDTO{
 		ID:              doc.ID,
@@ -746,7 +762,19 @@ func (h *Handler) documentItem(w http.ResponseWriter, r *http.Request, p auth.Pr
 		UpdatedBy:       doc.UpdatedBy,
 		CreatedAt:       doc.CreatedAt,
 		UpdatedAt:       doc.UpdatedAt,
+		Attachments:     attachments,
 	})
+}
+
+func (h *Handler) documentServiceError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, documents.ErrForbidden):
+		httputil.WriteJSON(w, http.StatusForbidden, httputil.ErrorBody(err.Error()))
+	case errors.Is(err, documents.ErrNotFound):
+		httputil.WriteJSON(w, http.StatusNotFound, httputil.ErrorBody(err.Error()))
+	default:
+		h.internalError(w, "document item", err)
+	}
 }
 
 // ---- events ----

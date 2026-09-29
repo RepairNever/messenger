@@ -35,6 +35,7 @@ import {
   MessageAlertEventSchema,
   ThreadSummaryUpdatedEventSchema,
   TaskStatusChangedEventSchema,
+  TaskCommentCreatedEventSchema,
   ServerEventSchema,
   PresenceEventSchema,
   PresenceStatus,
@@ -5612,5 +5613,41 @@ describe('chatStore.onTaskStatusChanged', () => {
       conversationTitle: 'general',
       threadTitle: 'Launch thread',
     })
+  })
+})
+
+describe('chatStore task comment events', () => {
+  it('dispatches live/replayed comments once, isolates consumers and unsubscribes', async () => {
+    setActivePinia(createPinia())
+    const chat = useChatStore()
+    const ws = useWsStore()
+    chat.bootstrapped = true
+    ws.state = 'LIVE_SYNCED'
+    const receive = vi.fn()
+    chat.onTaskCommentCreated(() => { throw new Error('consumer failed') })
+    const off = chat.onTaskCommentCreated(receive)
+    const event = (seq: bigint) => create(ServerEventSchema, {
+      eventSeq: seq, eventId: `comment-event-${seq}`, eventType: EventType.TASK_COMMENT_CREATED,
+      conversationId: 'hidden-task-channel',
+      payload: { case: 'taskCommentCreated', value: create(TaskCommentCreatedEventSchema, {
+        taskId: 'task-1', commentId: `comment-${seq}`, authorId: 'bot-id', authorName: 'Bot',
+      }) },
+    })
+    chat.handleServerEvent(event(1n))
+    chat.handleServerEvent(event(1n))
+    expect(receive).toHaveBeenCalledTimes(1)
+    expect(receive.mock.calls[0][0].authorName).toBe('Bot')
+    chat.handleSyncSinceResponse(create(SyncSinceResponseSchema, {
+      fromSeq: 1n, toSeq: 2n, events: [event(1n), event(2n)],
+    }))
+    await Promise.resolve()
+    await nextTick()
+    expect(receive).toHaveBeenCalledTimes(2)
+    expect(chat.lastAppliedEventSeq).toBe(2n)
+    expect(chat.channels).toEqual([])
+    off()
+    chat.handleServerEvent(event(3n))
+    expect(receive).toHaveBeenCalledTimes(2)
+    chat.resetRuntimeState()
   })
 })

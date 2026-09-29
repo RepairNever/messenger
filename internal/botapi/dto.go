@@ -147,15 +147,16 @@ type sendMessageResponse struct {
 // ---- tasks ----
 
 type taskCommentDTO struct {
-	ID                  uuid.UUID  `json:"id"`
-	TaskID              uuid.UUID  `json:"task_id"`
-	AuthorID            uuid.UUID  `json:"author_id"`
-	AuthorName          string     `json:"author_name"`
-	Body                string     `json:"body"`
-	ThreadRootMessageID *uuid.UUID `json:"thread_root_message_id"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
-	AttachmentCount     int        `json:"attachment_count"`
+	ID                  uuid.UUID       `json:"id"`
+	TaskID              uuid.UUID       `json:"task_id"`
+	AuthorID            uuid.UUID       `json:"author_id"`
+	AuthorName          string          `json:"author_name"`
+	Body                string          `json:"body"`
+	ThreadRootMessageID *uuid.UUID      `json:"thread_root_message_id"`
+	CreatedAt           time.Time       `json:"created_at"`
+	UpdatedAt           time.Time       `json:"updated_at"`
+	AttachmentCount     int             `json:"attachment_count"`
+	Attachments         []attachmentDTO `json:"attachments"`
 }
 
 type taskCommentsResponse struct {
@@ -206,15 +207,16 @@ type searchDocumentsResponse struct {
 // ---- documents ----
 
 type documentDTO struct {
-	ID              uuid.UUID  `json:"id"`
-	TeamspaceID     uuid.UUID  `json:"teamspace_id"`
-	ParentID        *uuid.UUID `json:"parent_id"`
-	Title           string     `json:"title"`
-	ContentMarkdown *string    `json:"content_markdown"`
-	CreatedBy       uuid.UUID  `json:"created_by"`
-	UpdatedBy       uuid.UUID  `json:"updated_by"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID              uuid.UUID       `json:"id"`
+	TeamspaceID     uuid.UUID       `json:"teamspace_id"`
+	ParentID        *uuid.UUID      `json:"parent_id"`
+	Title           string          `json:"title"`
+	ContentMarkdown *string         `json:"content_markdown"`
+	CreatedBy       uuid.UUID       `json:"created_by"`
+	UpdatedBy       uuid.UUID       `json:"updated_by"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+	Attachments     []attachmentDTO `json:"attachments"`
 }
 
 // ---- events ----

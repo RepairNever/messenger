@@ -954,6 +954,8 @@ export interface TaskComment {
   id: string
   task_id: string
   author_id: string
+  author_name?: string
+  author_avatar_url?: string
   thread_root_message_id?: string
   thread_reply_count?: number
   body: string
