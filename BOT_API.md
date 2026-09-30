@@ -199,6 +199,25 @@ This route is download-only. Direct task attachments, task-draft uploads, thumbn
 
 `GET /api/bot/v1/tasks/{public_id}` — same response shape as `GET /api/integrations/tasks/{public_id}` (template field metadata and status included). `404 {"error":"not found: task"}` for unknown ids.
 
+### Find tasks by version
+
+`GET /api/bot/v1/tasks/by-enum/version/value/{url-encoded label}` — mirrors the Integration API enum lookup, using the same bot Bearer token and Bot API rate limits. For example:
+
+```http
+GET /api/bot/v1/tasks/by-enum/version/value/Trade%20Financial%20API%20v1.113.0
+Authorization: Bearer <your-static-token>
+```
+
+Returns `200` with a JSON array of task DTOs, each in the same shape as `GET /api/bot/v1/tasks/{public_id}`: `public_id`, `title`, `description`, `status`, and `fields` (including template field metadata and values). There is no enclosing results object. Unknown labels, known labels with no matching tasks, and a missing version dictionary return `200 []`.
+
+- Label matching is **case-insensitive**, after trimming surrounding whitespace, and matches an entire enum item `value_code` or `value_name`; it does not match substrings. Thus `Trade Financial API v1.113.0` also matches `TRADE FINANCIAL API V1.113.0`.
+- As in the Integration API, `version` selects the enum **dictionary code**, matched case-sensitively. Both `enum` and `multi_enum` fields using that dictionary are searched. Historical dictionary versions are included; multiple matching items or fields produce each task only once.
+- Results are capped at **200 tasks**, ordered by task `updated_at` descending, then `id` descending, matching the Integration API. There is no pagination on this lookup.
+- **Visibility:** task reads and enum lookups are organization-wide for authenticated bots. Results are not filtered by teamspace membership or membership in a task's discussion channel.
+- Encode the label as a URL path segment (spaces as `%20`; encode reserved characters such as `/`, `%`, `#`, and `?`).
+
+Blank labels or malformed lookup paths return `400 {"error":"invalid enum lookup path"}`; unknown labels are not errors. The general mirrored route is `GET /api/bot/v1/tasks/by-enum/{enum_code}/value/{enum_value}`; this longer route takes precedence over the public-ID task route.
+
 ### List task comments
 
 `GET /api/bot/v1/tasks/{public_id}/comments` — chronological.

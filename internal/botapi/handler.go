@@ -54,6 +54,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/bot/v1/conversations/", h.requireAuth(h.conversationsRouter))
 	mux.HandleFunc("/api/bot/v1/messages", h.requireAuth(h.messages))
 	mux.HandleFunc("/api/bot/v1/attachments/", h.requireAuth(h.attachmentDownload))
+	// The longer enum lookup prefix wins over the public-ID task router.
+	mux.HandleFunc("/api/bot/v1/tasks/by-enum/", h.requireAuth(h.tasksByEnumValue))
 	mux.HandleFunc("/api/bot/v1/tasks/", h.requireAuth(h.tasksRouter))
 	mux.HandleFunc("/api/bot/v1/search/messages", h.requireAuth(h.searchMessages))
 	mux.HandleFunc("/api/bot/v1/search/documents", h.requireAuth(h.searchDocuments))
