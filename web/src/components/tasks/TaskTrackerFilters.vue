@@ -19,7 +19,7 @@
 
       <button
         class="toolbar-btn"
-        :class="filtersVisible ? 'border-accent/60 text-accent' : ''"
+        :class="filtersVisible ? 'border-accent/60 text-accent-text' : ''"
         @click="filtersVisible = !filtersVisible"
       >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -72,7 +72,7 @@
         </button>
         <div v-if="templateDropdownOpen" class="dropdown-menu dropdown-menu--tall">
           <button class="dropdown-item w-full text-left" @click="selectTemplate(null)">
-            <span :class="!selectedTemplateId ? 'text-accent' : ''">All templates</span>
+            <span :class="!selectedTemplateId ? 'text-accent-text' : ''">All templates</span>
           </button>
           <button
             v-for="t in tasksStore.activeTemplates"
@@ -80,7 +80,7 @@
             class="dropdown-item w-full text-left font-mono"
             @click="selectTemplate(t.id)"
           >
-            <span :class="selectedTemplateId === t.id ? 'text-accent' : ''">{{ t.prefix }}</span>
+            <span :class="selectedTemplateId === t.id ? 'text-accent-text' : ''">{{ t.prefix }}</span>
           </button>
         </div>
       </div>
@@ -209,7 +209,7 @@
 
       <label
         class="inline-flex items-center gap-2 rounded border border-chat-border px-2.5 py-1 text-xs text-gray-300 transition-colors hover:border-accent/40 hover:text-white"
-        :class="showSubtasks ? 'border-accent/60 text-accent' : ''"
+        :class="showSubtasks ? 'border-accent/60 text-accent-text' : ''"
       >
         <input
           v-model="showSubtasks"
@@ -496,7 +496,7 @@ onBeforeUnmount(() => {
          hover:border-accent/50 hover:text-white transition-colors;
 }
 .filter-chip.active {
-  @apply border-accent/60 text-accent;
+  @apply border-accent/60 text-accent-text;
 }
 .filter-chip-count {
   @apply ml-1 bg-accent text-white text-xs rounded-full px-1.5 py-0.5 leading-none;

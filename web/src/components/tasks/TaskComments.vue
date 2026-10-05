@@ -144,7 +144,7 @@
             <button
               v-if="canEditComment(comment) && editingCommentId !== comment.id"
               data-testid="task-comment-edit-button"
-              class="rounded px-1.5 py-0.5 text-[11px] text-accent transition-colors hover:bg-accent/10 hover:text-accent-hover"
+              class="rounded px-1.5 py-0.5 text-[11px] text-accent-text transition-colors hover:bg-accent/10 hover:text-accent-text"
               @click="startEditingComment(comment)"
             >
               Edit

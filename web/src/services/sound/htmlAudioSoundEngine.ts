@@ -5,6 +5,7 @@ const MESSAGE_PING_SRC = '/sounds/message-ping.wav'
 const CALL_INVITE_RING_SRC = '/sounds/call-invite.wav'
 const CALL_MEMBER_JOINED_SRC = '/sounds/call-member-joined.wav'
 const CALL_MEMBER_LEFT_SRC = '/sounds/call-member-left.wav'
+const CALL_HAND_RAISED_SRC = '/sounds/call-hand-raised.wav'
 const DEFAULT_MESSAGE_COOLDOWN_MS = 2_000
 
 export class HtmlAudioSoundEngine implements SoundEngine {
@@ -31,6 +32,10 @@ export class HtmlAudioSoundEngine implements SoundEngine {
 
   async playCallMemberLeft(): Promise<void> {
     await this.playOneShot(CALL_MEMBER_LEFT_SRC)
+  }
+
+  async playCallHandRaised(): Promise<void> {
+    await this.playOneShot(CALL_HAND_RAISED_SRC)
   }
 
   async startCallInviteRing(): Promise<void> {

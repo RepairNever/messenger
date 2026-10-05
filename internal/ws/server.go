@@ -15,6 +15,7 @@ import (
 	"github.com/gobwas/ws/wsutil"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -248,6 +249,7 @@ type Server struct {
 	pushNotifier          PushNotifier // optional; nil means push disabled
 	presenceLeaseTTL      time.Duration
 	presenceSweepInterval time.Duration
+	userRateLimiters      userRateLimiters
 }
 
 // NewServer creates a Server. bus may be nil during tests that don't exercise
@@ -273,8 +275,10 @@ func NewServer(db *database.DB, cfg *config.Config, authSvc *auth.Service, boots
 		collabRoomsBySession:  make(map[chan outboundMsg]map[string]struct{}),
 		presenceLeaseTTL:      defaultPresenceLeaseTTL,
 		presenceSweepInterval: defaultPresenceSweepInt,
+		userRateLimiters:      newUserRateLimiters(),
 	}
 	srv.startPresenceLeaseSweeper()
+	srv.startUserRateLimiterSweeper()
 	return srv
 }
 
@@ -314,6 +318,18 @@ func (s *Server) startPresenceLeaseSweeper() {
 	}()
 }
 
+// startUserRateLimiterSweeper expires per-user limiters left idle past the
+// TTL so the map holds only recently active accounts.
+func (s *Server) startUserRateLimiterSweeper() {
+	go func() {
+		ticker := time.NewTicker(userRateLimiterSweepInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.userRateLimiters.sweepIdle(userRateLimiterIdleTTL)
+		}
+	}()
+}
+
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, _, _, err := ws.UpgradeHTTP(r, w)
 	if err != nil {
@@ -335,6 +351,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// be enqueued before we close.
 	const overflowHeadroom = 4
 	outboundCh := make(chan outboundMsg, outboundQueueMax+overflowHeadroom)
+
+	connRateLimiter := newConnectionRateLimiter()
+	var userLimiter *rate.Limiter
+	// terminalErrorPending marks teardowns where an error envelope was queued
+	// for the peer right before the read loop exits, so the writer gets a
+	// bounded flush window instead of the socket closing under it.
+	var terminalErrorPending bool
 
 	// writerDone is closed when the writer goroutine exits.
 	writerDone := make(chan struct{})
@@ -378,9 +401,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	)
 
 	defer func() {
-		_ = conn.Close()
-		// Stop event subscriptions before closing the outbound channel so
-		// the fanout goroutine cannot write after close.
+		// Stop all producers (event fanout, direct fanout via unregister,
+		// collab fanout) before the outbound channel can be closed.
 		if unsubscribe != nil {
 			unsubscribe()
 		}
@@ -388,6 +410,30 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			unregisterSession()
 		}
 		s.removeCollabSession(outboundCh)
+		if fanoutDone != nil {
+			<-fanoutDone
+		}
+
+		// A terminal error envelope (oversized frame, rate limit) was queued
+		// for the peer. Give the writer a short bounded window to deliver it
+		// before the socket closes underneath it; if the writer is wedged on
+		// a dead connection the timeout expires and conn.Close below unblocks
+		// it. Without this the terminal envelope is a dead letter: conn.Close
+		// used to run before the writer ever picked the frame up.
+		if terminalErrorPending {
+			close(outboundCh)
+			select {
+			case <-writerDone:
+			case <-time.After(terminalErrorFlushTimeout):
+			}
+		}
+
+		_ = conn.Close()
+		if !terminalErrorPending {
+			close(outboundCh)
+		}
+		<-writerDone
+
 		if authComplete {
 			presenceCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			if err := s.removePresenceLease(presenceCtx, presenceConnectionID); err != nil {
@@ -399,11 +445,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			cancel()
 		}
-		if fanoutDone != nil {
-			<-fanoutDone
-		}
-		close(outboundCh)
-		<-writerDone
 		s.log.Info("WebSocket disconnected",
 			zap.String("remote_addr", r.RemoteAddr),
 			zap.String("user_id", func() string {
@@ -416,15 +457,51 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	for {
-		msg, op, err := wsutil.ReadClientData(conn)
+		msg, op, err := readClientDataLimited(conn, MaxEnvelopeBytes)
 		if err != nil {
-			s.log.Debug("WebSocket read error",
-				zap.String("remote_addr", r.RemoteAddr),
-				zap.Error(err))
+			if errors.Is(err, ErrMessageTooLarge) {
+				metrics.WsRateLimitedTotal.WithLabelValues("oversized").Inc()
+				s.log.Warn("ws: rejected oversized message",
+					zap.String("remote_addr", r.RemoteAddr),
+					zap.Int64("max_bytes", MaxEnvelopeBytes),
+				)
+				terminalErrorPending = true
+				enqueue(s.buildErrorEnvelope("", "", packetspb.ErrorCode_ERROR_CODE_BAD_REQUEST,
+					"envelope exceeds maximum allowed size", 0))
+			} else {
+				s.log.Debug("WebSocket read error",
+					zap.String("remote_addr", r.RemoteAddr),
+					zap.Error(err))
+			}
 			break
 		}
 
 		metrics.MessagesReceived.Inc()
+
+		// Enforce the advertised inbound rate policy before spending any time
+		// on the payload. A violation is terminal for this transport: the peer
+		// has demonstrated it will not respect the contract.
+		if !connRateLimiter.Allow() {
+			metrics.WsRateLimitedTotal.WithLabelValues("connection").Inc()
+			s.log.Warn("ws: connection rate limit exceeded, closing",
+				zap.String("remote_addr", r.RemoteAddr),
+			)
+			terminalErrorPending = true
+			enqueue(s.buildErrorEnvelope("", "", packetspb.ErrorCode_ERROR_CODE_RATE_LIMITED,
+				"rate limit exceeded", rateLimitRetryAfterMs))
+			break
+		}
+		if userLimiter != nil && !userLimiter.Allow() {
+			metrics.WsRateLimitedTotal.WithLabelValues("user").Inc()
+			s.log.Warn("ws: user rate limit exceeded, closing",
+				zap.String("remote_addr", r.RemoteAddr),
+				zap.String("user_id", principal.UserID.String()),
+			)
+			terminalErrorPending = true
+			enqueue(s.buildErrorEnvelope("", "", packetspb.ErrorCode_ERROR_CODE_RATE_LIMITED,
+				"rate limit exceeded", rateLimitRetryAfterMs))
+			break
+		}
 
 		if op != ws.OpBinary {
 			enqueue(s.buildErrorEnvelope("", "", packetspb.ErrorCode_ERROR_CODE_BAD_REQUEST, "binary protobuf envelope required", 0))
@@ -459,11 +536,11 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				Server:          "msgnr",
 				ProtocolVersion: protocolVersion,
 				RateLimitPolicy: &packetspb.RateLimitPolicy{
-					MaxEnvelopeBytes:   1 << 20,
-					PerConnectionRps:   50,
-					PerConnectionBurst: 100,
-					PerUserRps:         200,
-					PerUserBurst:       400,
+					MaxEnvelopeBytes:   uint32(MaxEnvelopeBytes),
+					PerConnectionRps:   PerConnectionRPS,
+					PerConnectionBurst: PerConnectionBurst,
+					PerUserRps:         PerUserRPS,
+					PerUserBurst:       PerUserBurst,
 					OutboundQueueMax:   uint32(s.config.WsOutboundQueueMax),
 					MaxSyncBatch:       uint32(s.config.MaxSyncBatch),
 				},
@@ -515,6 +592,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 			principal = p
 			authComplete = true
+			userLimiter = s.userRateLimiters.get(principal.UserID.String())
 			metrics.WsAuthTotal.WithLabelValues("success").Inc()
 			s.log.Info("ws auth: success",
 				zap.String("remote_addr", r.RemoteAddr),
@@ -818,6 +896,9 @@ func (s *Server) registerUserSession(userID string, outboundCh chan outboundMsg,
 		if len(sessions) == 0 {
 			delete(s.sessionsByUser, userID)
 		}
+		// The per-user rate limiter is intentionally kept here and expired by
+		// the idle sweeper instead: dropping it on disconnect would hand every
+		// reconnecting single-session client a fresh burst.
 	}
 }
 
@@ -2028,6 +2109,14 @@ func (s *Server) handleDomainPayload(
 				errors.Is(err, chat.ErrInvalidMessageEntity) ||
 				errors.Is(err, chat.ErrEmptyMessage) {
 				badReq("send_message_request: invalid attachments or body")
+				return
+			}
+			if errors.Is(err, chat.ErrMessageTooLarge) {
+				badReq("send_message_request: message body exceeds the maximum allowed length")
+				return
+			}
+			if errors.Is(err, chat.ErrInvalidClientMsgID) {
+				badReq("send_message_request: invalid client_msg_id")
 				return
 			}
 			s.log.Error("ws: SendMessage error", zap.Error(err), zap.String("user_id", principal.UserID.String()))

@@ -199,6 +199,10 @@ This route is download-only. Direct task attachments, task-draft uploads, thumbn
 
 `GET /api/bot/v1/tasks/{public_id}` — same response shape as `GET /api/integrations/tasks/{public_id}` (template field metadata and status included). `404 {"error":"not found: task"}` for unknown ids.
 
+`subtasks` is always present as an array, including `[]` when empty; it is never `null`. Items contain exactly `public_id` and `title`, ordered by `created_at` ascending, matching the UI. All statuses, including done or closed, remain included. Fetch each subtask's full details through this same endpoint using its `public_id`.
+
+Tasks allow one level of subtasks. Top-level tasks omit `parent_public_id`; subtasks return their parent's public ID and `subtasks: []`. Task and subtask reads are organization-wide for authenticated bots, with no per-subtask membership filtering. See the [Integration API examples](INTEGRATION.md#get-task) for parent and subtask responses.
+
 ### Find tasks by version
 
 `GET /api/bot/v1/tasks/by-enum/version/value/{url-encoded label}` — mirrors the Integration API enum lookup, using the same bot Bearer token and Bot API rate limits. For example:
@@ -208,7 +212,7 @@ GET /api/bot/v1/tasks/by-enum/version/value/Trade%20Financial%20API%20v1.113.0
 Authorization: Bearer <your-static-token>
 ```
 
-Returns `200` with a JSON array of task DTOs, each in the same shape as `GET /api/bot/v1/tasks/{public_id}`: `public_id`, `title`, `description`, `status`, and `fields` (including template field metadata and values). There is no enclosing results object. Unknown labels, known labels with no matching tasks, and a missing version dictionary return `200 []`.
+Returns `200` with a JSON array of task DTOs containing `public_id`, `title`, `description`, `status`, and `fields` (including template field metadata and values). Enum lookups do **not** include `subtasks` or `parent_public_id`; fetch a task through `GET /api/bot/v1/tasks/{public_id}` to retrieve those fields. There is no enclosing results object. Unknown labels, known labels with no matching tasks, and a missing version dictionary return `200 []`.
 
 - Label matching is **case-insensitive**, after trimming surrounding whitespace, and matches an entire enum item `value_code` or `value_name`; it does not match substrings. Thus `Trade Financial API v1.113.0` also matches `TRADE FINANCIAL API V1.113.0`.
 - As in the Integration API, `version` selects the enum **dictionary code**, matched case-sensitively. Both `enum` and `multi_enum` fields using that dictionary are searched. Historical dictionary versions are included; multiple matching items or fields produce each task only once.

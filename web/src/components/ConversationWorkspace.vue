@@ -6,7 +6,7 @@
       @scroll.passive="handleScroll"
     >
       <template v-if="messages.length === 0">
-        <div class="flex h-full flex-col items-center justify-center gap-2 text-gray-500">
+        <div class="flex h-full flex-col items-center justify-center gap-2 text-app-muted">
           <svg class="h-10 w-10" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
             <path d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-5l-5 5v-5z"/>
           </svg>
@@ -24,6 +24,15 @@
       >
         <template #default="{ item: msg, index: idx }">
           <div :data-conversation-message-id="msg.id">
+            <div
+              v-if="shouldShowDayDivider(idx)"
+              data-testid="day-divider"
+              class="my-3 flex items-center gap-3 px-2"
+            >
+              <div class="h-px flex-1 bg-chat-border" />
+              <span class="shrink-0 rounded-full border border-chat-border bg-chat-header px-3 py-1 text-xs font-semibold text-app-muted">{{ dayDividerLabel(msg.createdAt) }}</span>
+              <div class="h-px flex-1 bg-chat-border" />
+            </div>
             <MessageBubble
               :message="msg"
               :show-header="shouldShowHeader(idx)"
@@ -144,6 +153,26 @@ function shouldShowHeader(idx: number): boolean {
   if (!prev || !curr) return true
   if (prev.senderId !== curr.senderId) return true
   return new Date(curr.createdAt).getTime() - new Date(prev.createdAt).getTime() > 5 * 60 * 1000
+}
+
+function localDayKey(createdAt: string): string {
+  const d = new Date(createdAt)
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+}
+
+function shouldShowDayDivider(idx: number): boolean {
+  if (idx === 0) return true
+  const prev = messages.value[idx - 1]
+  const curr = messages.value[idx]
+  if (!prev || !curr) return true
+  return localDayKey(prev.createdAt) !== localDayKey(curr.createdAt)
+}
+
+function dayDividerLabel(createdAt: string): string {
+  const date = new Date(createdAt)
+  const options: Intl.DateTimeFormatOptions = { month: 'long', day: 'numeric' }
+  if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric'
+  return date.toLocaleDateString(undefined, options)
 }
 
 function threadReplyCount(rootMessageId: string): number {

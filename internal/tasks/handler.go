@@ -1303,7 +1303,7 @@ func (h *Handler) taskStagedAttachments(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	file, header, mimeType, err := parseMultipartFilePart(r, h.maxAttachSizeMB)
+	file, header, mimeType, err := parseMultipartFilePart(w, r, h.maxAttachSizeMB)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errBody(err.Error()))
 		return
@@ -1361,6 +1361,7 @@ func (h *Handler) taskStagedAttachmentDownload(w http.ResponseWriter, r *http.Re
 	}
 	defer body.Close()
 
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.Header().Set("Content-Disposition", `attachment; filename="`+sanitiseHeaderValue(fileName)+`"`)
@@ -1368,9 +1369,12 @@ func (h *Handler) taskStagedAttachmentDownload(w http.ResponseWriter, r *http.Re
 	io.Copy(w, body) //nolint:errcheck
 }
 
-func parseMultipartFilePart(r *http.Request, maxAttachSizeMB int) (multipart.File, *multipart.FileHeader, string, error) {
+func parseMultipartFilePart(w http.ResponseWriter, r *http.Request, maxAttachSizeMB int) (multipart.File, *multipart.FileHeader, string, error) {
 	maxBytes := int64(maxAttachSizeMB) * 1024 * 1024
 	formLimit := maxBytes + 2*1024*1024
+	// Cap the request body before parsing so oversized uploads are rejected
+	// while streaming instead of being spooled to temp files on disk first.
+	r.Body = http.MaxBytesReader(w, r.Body, formLimit)
 	if err := r.ParseMultipartForm(formLimit); err != nil {
 		return nil, nil, "", fmt.Errorf("failed to parse multipart form: %w", err)
 	}
@@ -1395,7 +1399,7 @@ func parseMultipartFilePart(r *http.Request, maxAttachSizeMB int) (multipart.Fil
 // over the limit and we reject the request (deleting the orphaned object).
 func (h *Handler) taskAttachmentUpload(w http.ResponseWriter, r *http.Request, p auth.Principal, taskID uuid.UUID) {
 	maxBytes := int64(h.maxAttachSizeMB) * 1024 * 1024
-	file, header, mimeType, err := parseMultipartFilePart(r, h.maxAttachSizeMB)
+	file, header, mimeType, err := parseMultipartFilePart(w, r, h.maxAttachSizeMB)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errBody(err.Error()))
 		return
@@ -1538,6 +1542,7 @@ func (h *Handler) taskAttachmentDownload(w http.ResponseWriter, r *http.Request,
 	}
 	defer body.Close()
 
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.Header().Set("Content-Disposition", `attachment; filename="`+sanitiseHeaderValue(fileName)+`"`)
@@ -1671,6 +1676,9 @@ func (h *Handler) taskCommentThreadEnsure(w http.ResponseWriter, r *http.Request
 func (h *Handler) taskCommentAttachmentUpload(w http.ResponseWriter, r *http.Request, p auth.Principal, taskID uuid.UUID) {
 	maxBytes := int64(h.maxAttachSizeMB) * 1024 * 1024
 	formLimit := maxBytes + 2*1024*1024
+	// Cap the request body before parsing so oversized uploads are rejected
+	// while streaming instead of being spooled to temp files on disk first.
+	r.Body = http.MaxBytesReader(w, r.Body, formLimit)
 	if err := r.ParseMultipartForm(formLimit); err != nil {
 		writeJSON(w, http.StatusBadRequest, errBody("failed to parse multipart form: "+err.Error()))
 		return
@@ -1720,6 +1728,7 @@ func (h *Handler) taskCommentAttachmentDownload(w http.ResponseWriter, r *http.R
 	}
 	defer body.Close()
 
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.Header().Set("Content-Disposition", `attachment; filename="`+sanitiseHeaderValue(fileName)+`"`)

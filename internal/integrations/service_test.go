@@ -100,6 +100,62 @@ func TestMapIntegrationTaskResponse(t *testing.T) {
 	}
 }
 
+func TestMapIntegrationTaskResponseHierarchyJSON(t *testing.T) {
+	parentPublicID := "INT-1"
+	for _, tt := range []struct {
+		name         string
+		task         tasks.TaskResponse
+		wantSubtasks string
+		wantParent   bool
+	}{
+		{name: "nil subtasks", wantSubtasks: "[]"},
+		{
+			name:         "empty subtasks",
+			task:         tasks.TaskResponse{Subtasks: []tasks.TaskSubtaskSummary{}},
+			wantSubtasks: "[]",
+		},
+		{
+			name: "parent preserves loaded order and exposes only pointers",
+			task: tasks.TaskResponse{Subtasks: []tasks.TaskSubtaskSummary{
+				{
+					TaskRow:   tasks.TaskRow{PublicID: "INT-3", Title: "First child", StatusID: uuid.New(), CreatedAt: time.Now()},
+					Assignees: []tasks.TaskAssigneeSummary{{DisplayName: "Assignee"}},
+				},
+				{TaskRow: tasks.TaskRow{PublicID: "INT-2", Title: "Second child"}},
+			}},
+			wantSubtasks: `[{"public_id":"INT-3","title":"First child"},{"public_id":"INT-2","title":"Second child"}]`,
+		},
+		{
+			name:         "subtask includes parent and empty array",
+			task:         tasks.TaskResponse{ParentPublicID: &parentPublicID},
+			wantSubtasks: "[]",
+			wantParent:   true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := mapIntegrationTaskResponse(tt.task, integrationTaskStatusDTO{}, nil)
+			data, err := json.Marshal(resp)
+			if err != nil {
+				t.Fatalf("marshal response: %v", err)
+			}
+			var payload map[string]json.RawMessage
+			if err := json.Unmarshal(data, &payload); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if got := string(payload["subtasks"]); got != tt.wantSubtasks {
+				t.Fatalf("expected subtasks %s, got %s", tt.wantSubtasks, got)
+			}
+			parent, present := payload["parent_public_id"]
+			if present != tt.wantParent {
+				t.Fatalf("expected parent_public_id presence %t, got %s", tt.wantParent, data)
+			}
+			if tt.wantParent && string(parent) != `"INT-1"` {
+				t.Fatalf("expected parent_public_id INT-1, got %s", parent)
+			}
+		})
+	}
+}
+
 func TestMapIntegrationDocumentResponse(t *testing.T) {
 	parentID := uuid.New()
 	description := "Document body"

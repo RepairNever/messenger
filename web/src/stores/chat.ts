@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
+import type { Timestamp } from '@bufbuild/protobuf/wkt'
 import {
   CallStatus,
   ConversationEncryptionMode,
@@ -90,6 +91,20 @@ import {
 
 // ── Domain types ──────────────────────────────────────────────────────────────
 
+function timestampToIso(timestamp: Timestamp | undefined): string | undefined {
+  if (!timestamp) return undefined
+  const millis = Number(timestamp.seconds) * 1000 + Math.floor(timestamp.nanos / 1_000_000)
+  const date = new Date(millis)
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined
+}
+
+function latestActivityAt(current: string | undefined, incoming: string | undefined): string | undefined {
+  const currentTime = current ? Date.parse(current) : Number.NaN
+  const incomingTime = incoming ? Date.parse(incoming) : Number.NaN
+  if (!Number.isFinite(incomingTime)) return current
+  return !Number.isFinite(currentTime) || incomingTime > currentTime ? incoming : current
+}
+
 export interface Channel {
   id: string
   name: string
@@ -113,6 +128,8 @@ export interface DirectMessage {
   unread: number
   hasUnreadThreadReplies?: boolean
   lastMessageSeq?: bigint
+  /** ISO timestamp of the latest message; drives sidebar ordering. */
+  lastActivityAt?: string
   notificationLevel: NotificationLevel
 }
 
@@ -1290,9 +1307,7 @@ export const useChatStore = defineStore('chat', () => {
     clearFocusedMessages()
     requestConversationComposerFocus()
     saveActiveConversationSelection(id)
-    if (activeThreadConversationId.value !== id) {
-      closeThread()
-    }
+    // The pinned ThreadWorkspace owns thread visibility independently of the main chat.
     const historyPromise = ensureConversationHistory(id, selectStartedAt)
     const ch = channels.value.find(c => c.id === id)
     let visibleLastReadSeq = 0n
@@ -1493,6 +1508,7 @@ export const useChatStore = defineStore('chat', () => {
   function addOptimisticMessage(msg: Message) {
     if (!messages.value[msg.channelId]) messages.value[msg.channelId] = []
     messages.value[msg.channelId].push(msg)
+    bumpConversationActivity(msg.channelId, msg.createdAt)
   }
 
   function reconcileMessage(channelId: string, clientMsgId: string, ack: SendMessageAck) {
@@ -1511,7 +1527,7 @@ export const useChatStore = defineStore('chat', () => {
       ...existing,
       id: ack.messageId,
       channelSeq: ack.channelSeq,
-      createdAt: ack.createdAt ? new Date(Number(ack.createdAt.seconds) * 1000).toISOString() : existing.createdAt,
+      createdAt: timestampToIso(ack.createdAt) ?? existing.createdAt,
       pending: undefined,
       sendStatus: undefined,
       failReason: undefined,
@@ -1538,7 +1554,7 @@ export const useChatStore = defineStore('chat', () => {
         ...existing,
         id: ack.messageId,
         channelSeq: ack.channelSeq,
-        createdAt: ack.createdAt ? new Date(Number(ack.createdAt.seconds) * 1000).toISOString() : existing.createdAt,
+        createdAt: timestampToIso(ack.createdAt) ?? existing.createdAt,
         pending: undefined,
         sendStatus: undefined,
         failReason: undefined,
@@ -2020,6 +2036,7 @@ export const useChatStore = defineStore('chat', () => {
       lastReplyAt: now,
       lastReplyUserId: senderId,
     })
+    bumpConversationActivity(channelId, now)
 
   }
 
@@ -2115,6 +2132,7 @@ export const useChatStore = defineStore('chat', () => {
       lastReplyAt: now,
       lastReplyUserId: senderId,
     })
+    bumpConversationActivity(conversationId, now)
 
   }
 
@@ -2454,6 +2472,8 @@ export const useChatStore = defineStore('chat', () => {
           unread,
           hasUnreadThreadReplies,
           lastMessageSeq: summary.lastMessageSeq,
+          // Empty DMs have a channel creation timestamp, but no message activity.
+          lastActivityAt: summary.lastMessageSeq > 0n ? timestampToIso(summary.lastActivityAt) : undefined,
           notificationLevel: summary.notificationLevel,
         })
       } else {
@@ -3057,6 +3077,7 @@ export const useChatStore = defineStore('chat', () => {
     useOfflineQueue().remove(ack.clientMsgId)
     reconcileMessage(ack.conversationId, ack.clientMsgId, ack)
     reconcileThreadMessage(ack.conversationId, ack.clientMsgId, ack)
+    bumpConversationActivity(ack.conversationId, timestampToIso(ack.createdAt), ack.channelSeq)
   }
 
   function handleReactionAck(ack: ReactionAck) {
@@ -3502,6 +3523,7 @@ export const useChatStore = defineStore('chat', () => {
         unread,
         hasUnreadThreadReplies,
         lastMessageSeq: summary.lastMessageSeq,
+        lastActivityAt: summary.lastMessageSeq > 0n ? timestampToIso(summary.lastActivityAt) : undefined,
         notificationLevel,
       }
       upsertDirectMessage(next)
@@ -3925,9 +3947,36 @@ export const useChatStore = defineStore('chat', () => {
     if (idx === -1) {
       directMessages.value.unshift(dm)
     } else {
-      directMessages.value.splice(idx, 1, dm)
+      const existing = directMessages.value[idx]
+      // Upserts without activity data (e.g. the open-DM HTTP DTO) must not
+      // erase the timestamp the sidebar order depends on.
+      directMessages.value.splice(idx, 1, {
+        ...dm,
+        lastActivityAt: latestActivityAt(existing.lastActivityAt, dm.lastActivityAt),
+        lastMessageSeq: (dm.lastMessageSeq ?? 0n) > (existing.lastMessageSeq ?? 0n)
+          ? dm.lastMessageSeq
+          : existing.lastMessageSeq,
+      })
     }
     void cacheConversations(channels.value, directMessages.value)
+  }
+
+  /**
+   * Advance a conversation's sidebar-activity timestamp monotonically. Only
+   * ever moves forward: replayed or out-of-order message events with an older
+   * createdAt must not pull a conversation back down the list.
+   */
+  function bumpConversationActivity(conversationId: string, activityAt: string | undefined, messageSeq = 0n) {
+    const conversation = channels.value.find(item => item.id === conversationId)
+      ?? directMessages.value.find(item => item.id === conversationId)
+    if (!conversation) return
+    const nextActivityAt = latestActivityAt(conversation.lastActivityAt, activityAt)
+    const sequenceAdvanced = messageSeq > (conversation.lastMessageSeq ?? 0n)
+    if (nextActivityAt !== conversation.lastActivityAt || sequenceAdvanced) {
+      conversation.lastActivityAt = nextActivityAt
+      if (sequenceAdvanced) conversation.lastMessageSeq = messageSeq
+      void cacheConversations(channels.value, directMessages.value)
+    }
   }
 
   function markDirectMessageEncrypted(conversationId: string) {
@@ -3945,7 +3994,6 @@ export const useChatStore = defineStore('chat', () => {
     clearFocusedMessages()
     requestConversationComposerFocus()
     saveActiveConversationSelection(dm.id)
-    closeThread()
     const target = directMessages.value.find(item => item.id === dm.id)
     if (target) target.unread = 0
     void ensureConversationHistory(dm.id)
@@ -4004,6 +4052,9 @@ export const useChatStore = defineStore('chat', () => {
   function _onMessageCreated(evt: ProtoMessageEvent) {
     const channelId = evt.conversationId
     const msg = _messageEventToMessage(evt, channelId)
+    // Apply metadata even if an ACK or history response already inserted the
+    // message. A missing server timestamp must not become new activity "now".
+    bumpConversationActivity(channelId, timestampToIso(evt.createdAt), evt.channelSeq)
 
     if (evt.threadRootMessageId) {
       const rootId = evt.threadRootMessageId
@@ -4052,10 +4103,6 @@ export const useChatStore = defineStore('chat', () => {
       () => messages.value[channelId]?.find(item => item.id === msg.id),
     )
     scheduleMessageCache(channelId, messages.value[channelId])
-    const channel = channels.value.find(item => item.id === channelId)
-    if (channel) channel.lastMessageSeq = evt.channelSeq
-    const dm = directMessages.value.find(item => item.id === channelId)
-    if (dm) dm.lastMessageSeq = evt.channelSeq
     if (isVisibleMessageTarget(channelId)) {
       markVisibleConversationRead(channelId, evt.channelSeq, evt.messageId)
       return
@@ -4324,9 +4371,7 @@ export const useChatStore = defineStore('chat', () => {
       threadRootMessageId: evt.threadRootMessageId || undefined,
       mentionedUserIds: mentionedUserIdsFromPayload(evt.entities, evt.mentionedUserIds),
       mentionEveryone: evt.mentionEveryone ?? false,
-      createdAt: evt.createdAt
-        ? new Date(Number(evt.createdAt.seconds) * 1000).toISOString()
-        : new Date().toISOString(),
+      createdAt: timestampToIso(evt.createdAt) ?? new Date().toISOString(),
       editedAt: evt.editedAt
         ? new Date(Number(evt.editedAt.seconds) * 1000).toISOString()
         : undefined,

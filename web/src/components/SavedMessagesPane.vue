@@ -1,13 +1,13 @@
 <template>
   <section class="flex h-full min-h-0 flex-col bg-chat-bg">
-    <header class="flex items-center justify-between border-b border-chat-border bg-chat-header px-4 py-3">
+    <header class="flex h-14 shrink-0 items-center justify-between border-b border-chat-border bg-chat-header px-4">
       <div>
-        <h1 class="text-sm font-semibold text-white">Saved Message</h1>
-        <p class="mt-1 text-xs text-gray-400">Messages saved across conversations.</p>
+        <h1 class="text-sm font-semibold text-app-text">Saved Message</h1>
+        <p class="mt-1 text-xs text-app-muted">Messages saved across conversations.</p>
       </div>
       <button
         type="button"
-        class="rounded border border-chat-border px-2.5 py-1 text-xs text-gray-300 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
+        class="rounded border border-chat-border px-2.5 py-1 text-xs text-app-secondaryText transition-colors hover:bg-app-hover hover:text-app-text disabled:opacity-50"
         :disabled="chatStore.savedMessagesLoading"
         @click="chatStore.refreshSavedMessages()"
       >
@@ -16,7 +16,7 @@
     </header>
 
     <div class="min-h-0 flex-1 overflow-y-auto">
-      <div v-if="chatStore.savedMessagesLoading && chatStore.savedMessageItems.length === 0" class="px-4 py-6 text-sm text-gray-400">
+      <div v-if="chatStore.savedMessagesLoading && chatStore.savedMessageItems.length === 0" class="px-4 py-6 text-sm text-app-muted">
         Loading saved messages...
       </div>
 
@@ -24,7 +24,7 @@
         {{ chatStore.savedMessagesError }}
       </div>
 
-      <div v-else-if="chatStore.savedMessageItems.length === 0" class="px-4 py-8 text-center text-sm text-gray-500">
+      <div v-else-if="chatStore.savedMessageItems.length === 0" class="px-4 py-8 text-center text-sm text-app-muted">
         No saved messages.
       </div>
 
@@ -34,7 +34,7 @@
           :key="item.id"
           role="button"
           tabindex="0"
-          class="block w-full cursor-pointer px-4 py-3 text-left transition-colors hover:bg-white/5 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-cyan-400/40"
+          class="block w-full cursor-pointer px-4 py-3 text-left transition-colors hover:bg-app-hover focus:outline-none focus:ring-1 focus:ring-inset focus:ring-cyan-400/40"
           @click="$emit('open-item', item)"
           @keydown.enter.prevent="$emit('open-item', item)"
           @keydown.space.prevent="$emit('open-item', item)"
@@ -44,11 +44,11 @@
               Saved
             </span>
             <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2 text-xs text-gray-400">
+              <div class="flex items-center gap-2 text-xs text-app-muted">
                 <span class="truncate">{{ conversationLabel(item) }}</span>
                 <span class="shrink-0">{{ formatTimestamp(item.savedAt) }}</span>
               </div>
-              <div class="mt-1 truncate text-sm font-medium text-white">
+              <div class="mt-1 truncate text-sm font-medium text-app-text">
                 {{ item.senderName || item.conversationTitle }}
               </div>
               <div
@@ -61,10 +61,10 @@
               </div>
               <div
                 v-if="item.body"
-                class="markdown-body mt-1 line-clamp-2 text-sm text-gray-300"
+                class="markdown-body mt-1 line-clamp-2 text-sm text-app-secondaryText"
                 v-html="renderSavedMessageBody(item)"
               ></div>
-              <div v-else class="mt-1 line-clamp-2 text-sm text-gray-300">
+              <div v-else class="mt-1 line-clamp-2 text-sm text-app-secondaryText">
                 Saved attachment message.
               </div>
             </div>

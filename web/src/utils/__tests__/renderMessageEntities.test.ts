@@ -9,9 +9,22 @@ describe('renderMessageBodyWithEntities', () => {
 
     expect(html).toContain('data-message-entity-kind="user"')
     expect(html).toContain('data-target-id="user-1"')
-    expect(html).toContain('text-accent')
+    expect(html).toContain('text-accent-text')
     expect(html).not.toContain('text-cyan')
     expect(html).toContain('@Alice')
+  })
+
+  it('renders entity links with unsafe hrefs as plain labels', () => {
+    const html = renderMessageBodyWithEntities('see @DEV-1 doc', [
+      { kind: 'task', targetId: 'task-1', label: '@DEV-1', href: 'javascript:alert(1)', start: 4, end: 10 },
+      { kind: 'document', targetId: 'doc-1', label: 'doc', href: 'data:text/html,bad', start: 11, end: 14 },
+    ])
+
+    expect(html).not.toContain('<a ')
+    expect(html).not.toContain('javascript:')
+    expect(html).not.toContain('data:text/html')
+    expect(html).toContain('@DEV-1')
+    expect(html).toContain('doc')
   })
 
   it('renders task entities as links and keeps plain text markdown-rendered', () => {
@@ -21,7 +34,7 @@ describe('renderMessageBodyWithEntities', () => {
 
     expect(html).toContain('href="/tasks/dev-1"')
     expect(html).toContain('data-message-entity-kind="task"')
-    expect(html).toContain('decoration-accent/40')
+    expect(html).toContain('decoration-accent-text/40')
     expect(html).not.toContain('decoration-cyan')
     expect(html).toContain('task:')
   })
@@ -74,5 +87,20 @@ describe('renderMessageBodyWithEntities', () => {
     expect(html).toContain('data-message-entity-kind="user"')
     expect(html).toContain('language-sql')
     expect(html).toContain('<span class="hljs-keyword">SELECT</span>')
+  })
+
+  it('highlights bare @mentions that have no entity and leaves emails alone', () => {
+    const html = renderMessageBodyWithEntities('ping @maya, write user@example.com', [])
+
+    expect(html).toContain('<span class="text-accent-text" data-mention-text>@maya</span>')
+    expect(html).not.toContain('data-mention-text">@example')
+    expect(html).toContain('user@example.com')
+  })
+
+  it('does not highlight bare mentions inside code blocks', () => {
+    const html = renderMessageBodyWithEntities('see:\n\n```\n@inside_code\n```', [])
+
+    expect(html).not.toContain('data-mention-text">@inside_code')
+    expect(html).toContain('@inside_code')
   })
 })

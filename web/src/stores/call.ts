@@ -2968,6 +2968,21 @@ export const useCallStore = defineStore('call', () => {
     clearAnnotationSession()
   })
 
+  // Hand-raise chime, mirroring the join/leave sounds: the server broadcasts
+  // the full raised-hands snapshot and each client diffs it locally. The
+  // initial snapshot on join arrives before connected flips true, so
+  // pre-existing hands stay silent.
+  watch(raisedHands, (next, prev) => {
+    if (!connected.value || suppressParticipantChangeSounds) return
+    const previousUserIds = new Set(prev.map(hand => hand.userId))
+    if (!next.some(hand => !previousUserIds.has(hand.userId))) return
+    if (platform?.type === 'tauri') {
+      void platform.notifications.playSound?.('call-hand-raised')
+    } else {
+      void soundEngine.playCallHandRaised()
+    }
+  })
+
   function registerWsHandlers() {
     const ws = useWsStore()
     ws.onJoinCallTokenResponse((resp, requestId) => {

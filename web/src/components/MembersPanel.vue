@@ -1,20 +1,20 @@
 <template>
   <aside class="w-[360px] max-w-[42vw] border-l border-chat-border bg-chat-header flex flex-col">
     <!-- Header -->
-    <header class="flex items-center justify-between px-4 py-3 border-b border-chat-border shrink-0">
+    <header class="flex h-14 shrink-0 items-center justify-between border-b border-chat-border px-4">
       <div class="flex items-center gap-2">
-        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <svg class="w-4 h-4 text-app-muted" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
           <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
         </svg>
         <span class="text-sm font-semibold text-white">Members</span>
-        <span v-if="!loading && members.length > 0" class="text-xs text-gray-500">{{ members.length }}</span>
+        <span v-if="!loading && members.length > 0" class="text-xs text-app-muted">{{ members.length }}</span>
       </div>
       <div class="flex items-center gap-1">
         <!-- Add member button — only for public channels -->
         <button
           v-if="visibility === 'public' || visibility === 'private'"
-          class="h-7 w-7 rounded flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+          class="h-7 w-7 rounded flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
           title="Add member"
           @click="openInviteDialog"
         >
@@ -26,7 +26,7 @@
           </svg>
         </button>
         <button
-          class="h-7 w-7 rounded flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+          class="h-7 w-7 rounded flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
           title="Close members"
           @click="$emit('close')"
         >
@@ -41,7 +41,7 @@
     <div class="flex-1 overflow-y-auto py-2">
       <!-- Loading -->
       <div v-if="loading" class="flex items-center justify-center py-10">
-        <svg class="h-5 w-5 animate-spin text-gray-500" viewBox="0 0 24 24" fill="none">
+        <svg class="h-5 w-5 animate-spin text-app-muted" viewBox="0 0 24 24" fill="none">
           <circle class="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3"/>
           <path class="opacity-90" d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
         </svg>
@@ -53,7 +53,7 @@
       </div>
 
       <!-- Empty -->
-      <div v-else-if="members.length === 0" class="px-4 py-6 text-xs text-gray-500 text-center">
+      <div v-else-if="members.length === 0" class="px-4 py-6 text-xs text-app-muted text-center">
         No members found.
       </div>
 
@@ -62,7 +62,7 @@
         <li
           v-for="member in members"
           :key="member.user_id"
-          class="flex items-center gap-3 px-4 py-2 hover:bg-white/5 transition-colors"
+          class="flex items-center gap-3 px-4 py-2 hover:bg-app-hover transition-colors"
         >
           <UserAvatar
             :user-id="member.user_id"
@@ -73,16 +73,16 @@
           />
           <!-- Name + email -->
           <div class="min-w-0 flex-1">
-            <div class="text-sm text-white truncate leading-tight">
+            <div class="text-sm text-app-text truncate leading-tight">
               {{ member.display_name || member.email }}
             </div>
-            <div v-if="member.display_name" class="text-xs text-gray-500 truncate leading-tight">
+            <div v-if="member.display_name" class="text-xs text-app-muted truncate leading-tight">
               {{ member.email }}
             </div>
           </div>
           <button
             v-if="canRemoveMember(member)"
-            class="h-7 w-7 shrink-0 rounded flex items-center justify-center text-gray-500 hover:text-red-300 hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+            class="h-7 w-7 shrink-0 rounded flex items-center justify-center text-app-muted hover:text-red-300 hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:pointer-events-none"
             title="Remove member"
             data-testid="remove-member-button"
             :data-user-id="member.user_id"
@@ -126,15 +126,15 @@
   <Teleport to="body">
     <div
       v-if="inviteOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      class="dlg-overlay z-50"
       @click.self="closeInviteDialog"
     >
-      <div class="w-full max-w-sm overflow-hidden rounded-xl border border-chat-border bg-chat-header shadow-2xl flex flex-col max-h-[70vh]">
+      <div class="dlg-window flex max-h-[70vh] max-w-sm flex-col overflow-hidden">
         <!-- Dialog header -->
-        <div class="flex items-center justify-between px-5 py-4 border-b border-chat-border shrink-0">
-          <h2 class="text-sm font-semibold text-white">Add member</h2>
+        <div class="dlg-head flex items-center justify-between border-b border-app-divider px-5 py-4 shrink-0">
+          <h2 class="dlg-title">Add member</h2>
           <button
-            class="h-7 w-7 rounded flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+            class="h-7 w-7 rounded flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
             @click="closeInviteDialog"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -144,19 +144,19 @@
         </div>
 
         <!-- Search input -->
-        <div class="px-4 py-3 border-b border-chat-border shrink-0">
+        <div class="border-b border-app-divider px-4 py-3 shrink-0">
           <input
             v-model="inviteSearch"
             type="text"
             placeholder="Search by name or email…"
-            class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-sm text-white placeholder-gray-500 outline-none focus:border-accent"
+            class="dlg-input"
             autofocus
           />
         </div>
 
         <!-- Candidates loading -->
         <div v-if="inviteLoading" class="flex items-center justify-center py-8">
-          <svg class="h-5 w-5 animate-spin text-gray-500" viewBox="0 0 24 24" fill="none">
+          <svg class="h-5 w-5 animate-spin text-app-muted" viewBox="0 0 24 24" fill="none">
             <circle class="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3"/>
             <path class="opacity-90" d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
           </svg>
@@ -165,7 +165,7 @@
         <!-- Empty candidates -->
         <div
           v-else-if="filteredCandidates.length === 0"
-          class="px-4 py-6 text-xs text-gray-500 text-center"
+          class="px-4 py-6 text-xs text-app-muted text-center"
         >
           {{ inviteSearch ? 'No users match your search.' : 'Everyone is already a member.' }}
         </div>
@@ -175,7 +175,7 @@
           <li
             v-for="candidate in filteredCandidates"
             :key="candidate.user_id"
-            class="flex items-center gap-3 px-4 py-2 hover:bg-white/5 transition-colors cursor-pointer"
+            class="flex items-center gap-3 px-4 py-2 hover:bg-app-hover transition-colors cursor-pointer"
             :class="inviteSubmittingId === candidate.user_id ? 'opacity-50 pointer-events-none' : ''"
             @click="inviteUser(candidate.user_id)"
           >
@@ -187,16 +187,16 @@
               size="md"
             />
             <div class="min-w-0 flex-1">
-              <div class="text-sm text-white truncate leading-tight">
+              <div class="text-sm text-app-text truncate leading-tight">
                 {{ candidate.display_name || candidate.email }}
               </div>
-              <div v-if="candidate.display_name" class="text-xs text-gray-500 truncate leading-tight">
+              <div v-if="candidate.display_name" class="text-xs text-app-muted truncate leading-tight">
                 {{ candidate.email }}
               </div>
             </div>
             <svg
               v-if="inviteSubmittingId === candidate.user_id"
-              class="h-4 w-4 animate-spin text-gray-400 shrink-0"
+              class="h-4 w-4 animate-spin text-app-muted shrink-0"
               viewBox="0 0 24 24"
               fill="none"
             >
@@ -207,8 +207,8 @@
         </ul>
 
         <!-- Error -->
-        <div v-if="inviteError" class="px-4 py-2 border-t border-chat-border shrink-0">
-          <p class="text-xs text-red-400">{{ inviteError }}</p>
+        <div v-if="inviteError" class="border-t border-app-divider px-4 py-2 shrink-0">
+          <p class="text-xs text-app-danger">{{ inviteError }}</p>
         </div>
       </div>
     </div>

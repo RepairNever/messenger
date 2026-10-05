@@ -12,6 +12,7 @@ import { useWsStore } from '@/stores/ws'
 import { useOfflineQueue } from '@/composables/useOfflineQueue'
 
 const cacheMocks = vi.hoisted(() => ({
+  cacheConversations: vi.fn().mockResolvedValue(undefined),
   enqueueOutbound: vi.fn(),
   loadOutboundQueue: vi.fn(),
   removeOutbound: vi.fn(),
@@ -1408,7 +1409,7 @@ describe('ChatArea', () => {
       },
     })
 
-    const callButton = wrapper.findAll('button').find(btn => btn.text().includes('Call'))
+    const callButton = wrapper.findAll('button').find(btn => btn.attributes('aria-label') === 'Start call')
     expect(callButton).toBeDefined()
     await callButton!.trigger('click')
     await Promise.resolve()
@@ -1458,7 +1459,7 @@ describe('ChatArea', () => {
       },
     })
 
-    const callButton = wrapper.findAll('button').find(btn => btn.text().includes('Call'))
+    const callButton = wrapper.findAll('button').find(btn => btn.attributes('aria-label') === 'Start call')
     expect(callButton).toBeDefined()
     await callButton!.trigger('click')
     await flushAll()
@@ -1515,7 +1516,7 @@ describe('ChatArea', () => {
       },
     })
 
-    const callButton = wrapper.findAll('button').find(btn => btn.text().includes('Call'))
+    const callButton = wrapper.findAll('button').find(btn => btn.attributes('aria-label') === 'Start call')
     expect(callButton).toBeDefined()
     await callButton!.trigger('click')
     await flushAll()
@@ -1738,7 +1739,7 @@ describe('ChatArea', () => {
       },
     })
 
-    const callButton = wrapper.findAll('button').find(btn => btn.text().includes('Call active'))
+    const callButton = wrapper.findAll('button').find(btn => btn.attributes('aria-label') === 'Ongoing call')
     expect(callButton).toBeDefined()
     await callButton!.trigger('click')
 
@@ -1813,5 +1814,78 @@ describe('ChatArea', () => {
     await wrapper.get('[data-testid="typing-off"]').trigger('click')
 
     expect(wsStore.sendTyping).toHaveBeenCalledTimes(2)
+  })
+
+  it('renders day dividers between messages from different days', () => {
+    const chatStore = useChatStore()
+    chatStore.channels = [{
+      id: 'channel-1',
+      name: 'general',
+      kind: 'channel',
+      visibility: 'public',
+      unread: 0,
+      notificationLevel: NotificationLevel.ALL,
+    }]
+    chatStore.activeChannelId = 'channel-1'
+    chatStore.messages = {
+      'channel-1': [
+        buildMessage({ id: 'm-1', channelSeq: 1n, createdAt: '2026-03-05T12:00:00Z' }),
+        buildMessage({ id: 'm-2', channelSeq: 2n, createdAt: '2026-03-07T12:00:00Z' }),
+      ],
+    }
+
+    const wrapper = mount(ChatArea, {
+      global: {
+        stubs: {
+          MessageBubble: true,
+          MessageInput: true,
+        },
+      },
+    })
+
+    expect(wrapper.findAll('[data-testid="day-divider"]')).toHaveLength(2)
+    expect(wrapper.text()).toContain('March 5')
+    expect(wrapper.text()).toContain('March 7')
+  })
+
+  it('renders the unread divider at the derived boundary and drops it once read', async () => {
+    const chatStore = useChatStore()
+    chatStore.channels = [{
+      id: 'channel-1',
+      name: 'general',
+      kind: 'channel',
+      visibility: 'public',
+      unread: 1,
+      lastMessageSeq: 3n,
+      notificationLevel: NotificationLevel.ALL,
+    }]
+    chatStore.activeChannelId = 'channel-1'
+    chatStore.messages = {
+      'channel-1': [
+        buildMessage({ id: 'm-1', channelSeq: 1n }),
+        buildMessage({ id: 'm-2', channelSeq: 2n }),
+        buildMessage({ id: 'm-3', channelSeq: 3n }),
+      ],
+    }
+
+    const wrapper = mount(ChatArea, {
+      global: {
+        stubs: {
+          MessageBubble: true,
+          MessageInput: true,
+        },
+      },
+    })
+    await flushAll()
+
+    expect(wrapper.findAll('[data-testid="unread-divider"]')).toHaveLength(1)
+
+    chatStore.channels[0].unread = 0
+    chatStore.activeChannelId = ''
+    await nextTick()
+    chatStore.activeChannelId = 'channel-1'
+    await flushAll()
+
+    expect(wrapper.findAll('[data-testid="unread-divider"]')).toHaveLength(0)
   })
 })

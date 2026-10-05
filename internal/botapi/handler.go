@@ -23,9 +23,7 @@ import (
 
 const (
 	// body limit shared by message and comment authoring, in runes.
-	maxBodyRunes = 32000
-	// client_msg_id charset: [A-Za-z0-9._:~-], 1..128 chars.
-	clientMsgIDMaxLen = 128
+	maxBodyRunes = chat.MaxMessageBodyRunes
 	// slack added to the write deadline around a long poll.
 	writeDeadlineSlack = 5 * time.Second
 )
@@ -404,7 +402,7 @@ func (h *Handler) messagesPost(w http.ResponseWriter, r *http.Request, p auth.Pr
 		httputil.WriteJSON(w, http.StatusBadRequest, httputil.ErrorBody("invalid conversation id"))
 		return
 	}
-	if !validClientMsgID(req.ClientMsgID) {
+	if !chat.IsValidClientMsgID(req.ClientMsgID) {
 		httputil.WriteJSON(w, http.StatusBadRequest, httputil.ErrorBody("invalid client_msg_id"))
 		return
 	}
@@ -841,21 +839,6 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request, p auth.Principa
 func (h *Handler) internalError(w http.ResponseWriter, where string, err error) {
 	h.log.Error("botapi: "+where, zap.Error(err))
 	httputil.WriteJSON(w, http.StatusInternalServerError, httputil.ErrorBody("internal error"))
-}
-
-func validClientMsgID(id string) bool {
-	if id == "" || len(id) > clientMsgIDMaxLen {
-		return false
-	}
-	for _, r := range id {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '.' || r == '_' || r == ':' || r == '~' || r == '-':
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func entityKindFromDTO(kind string) (chat.MessageEntityKind, bool) {

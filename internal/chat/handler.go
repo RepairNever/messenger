@@ -1247,6 +1247,9 @@ func (h *Handler) chatAttachments(w http.ResponseWriter, r *http.Request, princi
 	}
 	maxBytes := int64(maxAttachSizeMB) * 1024 * 1024
 	formLimit := maxBytes + 2*1024*1024
+	// Cap the request body before parsing so oversized uploads are rejected
+	// while streaming instead of being spooled to temp files on disk first.
+	r.Body = http.MaxBytesReader(w, r.Body, formLimit)
 	if err := r.ParseMultipartForm(formLimit); err != nil {
 		httputil.WriteJSON(w, http.StatusBadRequest, httputil.ErrorBody("failed to parse multipart form: "+err.Error()))
 		return
@@ -1551,6 +1554,8 @@ func (h *Handler) patchMessage(w http.ResponseWriter, r *http.Request, principal
 			httputil.WriteJSON(w, http.StatusForbidden, httputil.ErrorBody("only author can edit this message"))
 		case errors.Is(err, ErrEmptyMessage):
 			httputil.WriteJSON(w, http.StatusBadRequest, httputil.ErrorBody("message body and attachments are both empty"))
+		case errors.Is(err, ErrMessageTooLarge):
+			httputil.WriteJSON(w, http.StatusBadRequest, httputil.ErrorBody("message body exceeds the maximum allowed length"))
 		case errors.Is(err, ErrEncryptedMessageUnsupported):
 			httputil.WriteJSON(w, http.StatusBadRequest, httputil.ErrorBody("encrypted messages cannot be edited yet"))
 		case errors.Is(err, ErrInvalidMessageEntity):
@@ -1624,6 +1629,7 @@ func (h *Handler) downloadMessageAttachment(
 	}
 	defer body.Close()
 
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.Header().Set("Content-Disposition", `attachment; filename="`+sanitiseHeaderValue(fileName)+`"`)
@@ -1653,6 +1659,7 @@ func (h *Handler) downloadMessageAttachmentThumbnail(
 	defer body.Close()
 
 	etag := fmt.Sprintf(`"chat-thumbnail-v%d-%s-%d"`, version, attachmentID.String(), size)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.Header().Set("Cache-Control", "private, max-age=2592000, immutable")

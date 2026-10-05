@@ -220,6 +220,10 @@ export class TauriAdapter implements PlatformAdapter {
         await this.soundEngine.playCallMemberJoined()
         return
       }
+      if (soundId === 'call-hand-raised') {
+        await this.soundEngine.playCallHandRaised()
+        return
+      }
       if (soundId === 'call-member-left') {
         await this.soundEngine.playCallMemberLeft()
       }

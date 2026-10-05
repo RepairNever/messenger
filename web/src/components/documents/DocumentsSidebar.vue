@@ -32,7 +32,7 @@
     >
       <button
         type="button"
-        class="flex w-full items-center gap-2 rounded bg-accent px-3 py-2 text-left text-sm font-medium text-white transition-colors hover:bg-accent-hover"
+        class="flex w-full items-center gap-2 rounded border border-white/10 px-3 py-2 text-left text-sm font-medium text-sidebar-text transition-colors hover:bg-sidebar-hover hover:text-white"
         data-testid="documents-teamspaces-button"
         @click="$emit('openTeamspaces')"
       >
@@ -44,8 +44,9 @@
 
       <section class="mt-3 space-y-1" data-testid="documents-favorites-section">
         <div class="px-3 pb-1 text-xs font-semibold uppercase text-sidebar-heading">Favorites</div>
-        <div v-if="documentsStore.sidebarLoading" class="px-3 py-1 text-xs text-gray-500">
-          Loading...
+        <div v-if="documentsStore.sidebarLoading" class="space-y-1 px-2 pt-1" aria-hidden="true">
+          <div class="h-6 w-4/5 animate-pulse rounded bg-sidebar-hover" />
+          <div class="h-6 w-3/5 animate-pulse rounded bg-sidebar-hover" />
         </div>
         <div v-else-if="documentsStore.sidebarError" class="px-3 py-1 text-xs text-red-400">
           {{ documentsStore.sidebarError }}
@@ -57,7 +58,7 @@
           <div
             v-for="favorite in documentsStore.favoriteDocuments"
             :key="favorite.id"
-            class="group flex w-full items-center gap-1 rounded px-2 py-1 text-sm transition-colors"
+            class="group flex min-h-8 w-full items-center gap-1 rounded-md pr-1.5 text-[15px] transition-colors"
             :class="selectedDocumentId === favorite.id ? 'bg-sidebar-active text-white' : 'text-sidebar-text hover:bg-sidebar-hover'"
           >
             <button
@@ -69,7 +70,7 @@
               <svg class="h-3.5 w-3.5 shrink-0 text-yellow-300" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.175 3.617a1 1 0 0 0 .95.69h3.804c.969 0 1.371 1.24.588 1.81l-3.078 2.237a1 1 0 0 0-.364 1.118l1.176 3.617c.299.921-.756 1.688-1.54 1.118l-3.077-2.236a1 1 0 0 0-1.176 0l-3.077 2.236c-.784.57-1.839-.197-1.54-1.118l1.176-3.617a1 1 0 0 0-.364-1.118L2.526 9.044c-.783-.57-.38-1.81.588-1.81h3.804a1 1 0 0 0 .95-.69l1.181-3.617z" />
               </svg>
-              <span class="min-w-0 flex-1 truncate">{{ favorite.title }}</span>
+              <span class="min-w-0 flex-1 truncate" :title="favorite.title">{{ favorite.title }}</span>
             </button>
             <button
               type="button"
@@ -100,8 +101,11 @@
       class="min-h-0 flex-1 overflow-y-auto px-2 py-3"
       data-testid="documents-tree-scroll"
     >
-      <div v-if="documentsStore.sidebarLoading" class="px-3 py-2 text-xs text-gray-500">
-        Loading...
+      <div v-if="documentsStore.sidebarLoading" class="space-y-2 px-1 pt-1" aria-hidden="true">
+        <div v-for="i in 3" :key="i" class="space-y-1">
+          <div class="h-8 animate-pulse rounded-md bg-sidebar-hover" :style="{ width: `${Math.max(45, 88 - i * 12)}%` }" />
+          <div class="ml-6 h-7 w-2/3 animate-pulse rounded-md bg-sidebar-hover" />
+        </div>
       </div>
       <div v-else-if="documentsStore.sidebarError" class="px-3 py-2 text-xs text-red-400">
         {{ documentsStore.sidebarError }}
@@ -114,14 +118,14 @@
         <div v-else class="space-y-2">
           <div v-for="teamspace in documentsStore.sidebarTeamspaces" :key="teamspace.id" class="rounded border border-transparent">
             <div
-              class="group flex items-center gap-2 rounded px-3 py-2 text-sm"
+              class="group flex min-h-8 items-center gap-1 rounded-md px-1.5 text-[15px]"
               :class="selectedTeamspaceId === teamspace.id && !selectedDocumentId
                 ? 'bg-sidebar-active text-white'
                 : 'text-sidebar-text hover:bg-sidebar-hover'"
             >
               <button
                 type="button"
-                class="flex min-w-0 flex-1 items-center gap-2 truncate text-left font-medium"
+                class="flex min-w-0 flex-1 items-center gap-1.5 truncate text-left font-medium"
                 :data-testid="`documents-teamspace-${teamspace.id}`"
                 @click="toggleTeamspace(teamspace.id)"
               >
@@ -137,11 +141,18 @@
                     clip-rule="evenodd"
                   />
                 </svg>
-                {{ teamspace.name }}
+                <span
+                  class="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-semibold text-white"
+                  :style="{ backgroundColor: teamspaceBadgeColor(teamspace.id) }"
+                  aria-hidden="true"
+                >
+                  {{ teamspaceBadgeInitial(teamspace.name) }}
+                </span>
+                <span class="min-w-0 flex-1 truncate" :title="teamspace.name">{{ teamspace.name }}</span>
               </button>
               <button
                 type="button"
-                class="hidden h-5 w-5 shrink-0 rounded text-sidebar-textMuted group-hover:block group-focus-within:block hover:bg-sidebar-hover hover:text-sidebar-text"
+                class="hidden h-5 w-5 shrink-0 items-center justify-center rounded text-sidebar-textMuted group-hover:flex group-focus-within:flex hover:bg-sidebar-hover hover:text-sidebar-text"
                 :data-testid="`documents-teamspace-add-${teamspace.id}`"
                 title="Add root document"
                 @click.stop="openCreateDocument(teamspace.id, null)"
@@ -151,6 +162,12 @@
             </div>
 
             <div v-if="!isCollapsed(teamspace.id)" class="space-y-1 py-1">
+              <p
+                v-if="normalizeDocumentNodes(teamspace.documents).length === 0"
+                class="pl-12 pr-2 py-1.5 text-xs text-sidebar-textMuted"
+              >
+                No documents yet
+              </p>
               <DocumentsTreeNode
                 v-for="node in normalizeDocumentNodes(teamspace.documents)"
                 :key="node.id"
@@ -173,12 +190,12 @@
   <Teleport to="body">
     <div
       v-if="createModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      class="dlg-overlay z-50"
       @click.self="closeCreateModal"
     >
-      <div class="w-full max-w-md rounded-xl border border-chat-border bg-chat-header p-5 shadow-2xl">
+      <div class="dlg-window max-w-md" role="dialog" aria-modal="true">
         <div class="mb-4 flex items-center justify-between gap-3">
-          <h3 class="text-base font-semibold text-white">
+          <h3 class="dlg-title">
             {{ createParentDocumentId ? 'New child document' : 'New document' }}
           </h3>
           <button
@@ -194,29 +211,29 @@
 
         <div class="space-y-3">
           <div>
-            <label class="mb-1 block text-sm text-gray-400">Title</label>
+            <label class="dlg-label">Title</label>
             <input
               v-model="createTitle"
               type="text"
-              class="w-full rounded border border-chat-border bg-chat-input px-3 py-2 text-sm text-white outline-none focus:border-accent"
+              class="dlg-input"
               placeholder="Document title"
             >
           </div>
           <div>
-            <label class="mb-1 block text-sm text-gray-400">Initial markdown</label>
+            <label class="dlg-label">Initial markdown</label>
             <textarea
               v-model="createContent"
-              class="min-h-[120px] w-full rounded border border-chat-border bg-chat-input px-3 py-2 text-sm text-white outline-none focus:border-accent"
+              class="dlg-input min-h-[120px]"
               placeholder="# Notes"
             />
           </div>
-          <p v-if="createError" class="text-xs text-red-400">{{ createError }}</p>
+          <p v-if="createError" class="text-xs text-app-danger">{{ createError }}</p>
         </div>
 
         <div class="mt-4 flex justify-end gap-2">
           <button
             type="button"
-            class="rounded border border-chat-border px-3 py-1.5 text-sm text-gray-300 transition-colors hover:text-white"
+            class="dlg-btn dlg-btn-ghost"
             :disabled="createSaving"
             @click="closeCreateModal"
           >
@@ -224,7 +241,7 @@
           </button>
           <button
             type="button"
-            class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+            class="dlg-btn dlg-btn-primary"
             :disabled="createSaving || !createTitle.trim()"
             @click="submitCreateDocument"
           >
@@ -278,6 +295,21 @@ const createError = ref('')
 const treeScrollRef = ref<HTMLElement | null>(null)
 const removingFavoriteId = ref<string | null>(null)
 const favoriteActionError = ref('')
+
+const teamspaceBadgePalette = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EC4899', '#06B6D4']
+
+function teamspaceBadgeColor(id: string): string {
+  let hash = 0
+  for (let i = 0; i < id.length; i += 1) {
+    hash = (Math.imul(31, hash) + id.charCodeAt(i)) | 0
+  }
+  return teamspaceBadgePalette[Math.abs(hash) % teamspaceBadgePalette.length]
+}
+
+function teamspaceBadgeInitial(name: string): string {
+  const initial = name.trim().charAt(0).toUpperCase()
+  return initial || '•'
+}
 
 onMounted(() => {
   void documentsStore.loadSidebar()

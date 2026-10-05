@@ -3,13 +3,12 @@
     <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 
     <!-- Top bar -->
-    <header class="flex items-center gap-3 px-4 py-3 border-b border-chat-border bg-chat-header shrink-0">
-      <div class="flex items-center gap-1.5 font-bold text-white truncate">
-        <span class="text-gray-400 font-normal text-lg">{{ conversationPrefix }}</span>
+    <header class="flex h-14 shrink-0 items-center gap-2 border-b border-chat-border bg-chat-header px-3">
+      <div class="flex items-center gap-1.5 pl-1.5 font-bold text-[15px] text-app-text truncate">
+        <span class="font-normal text-app-muted">{{ conversationPrefix }}</span>
         {{ conversation?.title ?? '…' }}
       </div>
-      <div v-if="conversation" class="h-5 w-px bg-chat-border mx-1 shrink-0" />
-      <div class="ml-auto flex items-center gap-2 shrink-0">
+      <div class="ml-auto flex items-center gap-1 shrink-0">
         <div
           v-if="activeConversationCall"
           class="relative"
@@ -20,17 +19,17 @@
           @focusout="handleCallMembersFocusOut"
         >
           <button
-            class="p-1.5 rounded transition-colors flex items-center gap-1 text-sm"
-            :class="activeConversationCall ? 'bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25' : 'hover:bg-white/10 text-gray-400 hover:text-white'"
+            class="grid h-8 w-8 place-items-center rounded-full bg-accent/15 text-accent-text transition-colors hover:bg-accent/25"
             :disabled="!conversation"
             :aria-expanded="callMembersPopoverOpen"
             aria-haspopup="true"
+            aria-label="Ongoing call"
+            title="Ongoing call"
             @click="handleCallClick"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.63 2.63a2 2 0 0 1-.45 2.11L8.1 9.91a16 16 0 0 0 6 6l1.45-1.19a2 2 0 0 1 2.11-.45c.85.3 1.73.51 2.63.63A2 2 0 0 1 22 16.92z"/>
             </svg>
-            <span class="hidden sm:inline">Call active</span>
           </button>
 
           <div
@@ -42,7 +41,7 @@
               <div class="text-sm font-semibold text-white">Call members</div>
             </div>
 
-            <div v-if="remoteActiveCallMembersLoading" class="px-4 py-5 text-sm text-gray-400">
+            <div v-if="remoteActiveCallMembersLoading" class="px-4 py-5 text-sm text-app-muted">
               Loading active members...
             </div>
 
@@ -50,7 +49,7 @@
               {{ remoteActiveCallMembersError }}
             </div>
 
-            <div v-else-if="activeCallMembers.length === 0" class="px-4 py-5 text-sm text-gray-400">
+            <div v-else-if="activeCallMembers.length === 0" class="px-4 py-5 text-sm text-app-muted">
               No active members
             </div>
 
@@ -77,19 +76,19 @@
         </div>
         <button
           v-else
-          class="p-1.5 rounded transition-colors flex items-center gap-1 text-sm"
-          :class="activeConversationCall ? 'bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25' : 'hover:bg-white/10 text-gray-400 hover:text-white'"
+          class="grid h-8 w-8 place-items-center rounded-full text-app-muted transition-colors hover:bg-app-hover hover:text-app-text"
           :disabled="!conversation"
+          aria-label="Start call"
+          title="Start call"
           @click="handleCallClick"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.63 2.63a2 2 0 0 1-.45 2.11L8.1 9.91a16 16 0 0 0 6 6l1.45-1.19a2 2 0 0 1 2.11-.45c.85.3 1.73.51 2.63.63A2 2 0 0 1 22 16.92z"/>
           </svg>
-          <span class="hidden sm:inline">Call</span>
         </button>
         <button
           data-testid="conversation-search-button"
-          class="p-1.5 rounded hover:bg-white/10 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+          class="grid h-8 w-8 place-items-center rounded-full text-app-muted transition-colors hover:bg-app-hover hover:text-app-text disabled:opacity-50"
           :disabled="!conversation"
           title="Search conversation"
           aria-label="Search conversation"
@@ -100,8 +99,8 @@
           </svg>
         </button>
         <button
-          class="p-1.5 rounded transition-colors flex items-center gap-1 text-sm"
-          :class="isConversationPinned ? 'bg-cyan-500/15 text-cyan-200' : 'hover:bg-white/10 text-gray-400 hover:text-white'"
+          class="grid h-8 w-8 place-items-center rounded-full transition-colors"
+          :class="isConversationPinned ? 'bg-accent/15 text-accent-text' : 'text-app-muted hover:bg-app-hover hover:text-app-text'"
           :disabled="!conversation"
           title="Pin conversation"
           aria-label="Pin conversation"
@@ -113,19 +112,19 @@
             <path d="M7 4h10" />
             <path d="M9 4v5l-3 4h12l-3-4V4" />
           </svg>
-          <span class="hidden sm:inline">Pin</span>
         </button>
         <button
-          class="p-1.5 rounded transition-colors flex items-center gap-1 text-sm"
-          :class="isMembersPanelOpen ? 'bg-white/15 text-white' : 'hover:bg-white/10 text-gray-400 hover:text-white'"
+          class="grid h-8 w-8 place-items-center rounded-full transition-colors"
+          :class="isMembersPanelOpen ? 'bg-accent/15 text-accent-text' : 'text-app-muted hover:bg-app-hover hover:text-app-text'"
           :disabled="!conversation"
+          aria-label="Members"
+          title="Members"
           @click="toggleMembersPanel"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
             <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
           </svg>
-          <span class="hidden sm:inline">Members</span>
         </button>
       </div>
     </header>
@@ -133,17 +132,17 @@
     <div class="relative flex-1 min-h-0">
       <div
         ref="scrollEl"
-        class="h-full overflow-y-auto px-4 py-4 space-y-0.5"
+        class="h-full overflow-y-auto overflow-x-hidden px-4 py-4 space-y-0.5"
         style="overflow-anchor: none; overscroll-behavior-y: contain;"
         @scroll.passive="handleScroll"
       >
         <template v-if="messages.length === 0">
-          <div class="flex min-h-full flex-col items-center justify-center text-gray-500 gap-2">
+          <div class="flex min-h-full flex-col items-center justify-center text-app-muted gap-2">
             <svg class="w-10 h-10" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
               <path d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 0 1 2 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
             </svg>
             <span class="text-sm">No messages yet. Start the conversation!</span>
-            <span v-if="wsStore.state === 'BOOTSTRAPPING' || wsStore.state === 'RECOVERING_GAP' || wsStore.state === 'STALE_REBOOTSTRAP'" class="text-xs text-gray-600">
+            <span v-if="wsStore.state === 'BOOTSTRAPPING' || wsStore.state === 'RECOVERING_GAP' || wsStore.state === 'STALE_REBOOTSTRAP'" class="text-xs text-app-muted">
               {{ statusLabel }}
             </span>
           </div>
@@ -159,8 +158,26 @@
           <template #default="{ item: msg, index: idx }">
             <div
               :data-message-id="msg.id"
-              :class="msg.id === chatStore.focusedMessageId ? 'rounded-md bg-amber-500/10 ring-1 ring-amber-300/40' : ''"
+              class="w-full"
+              :class="msg.id === chatStore.focusedMessageId ? 'rounded-xl bg-amber-500/10 ring-1 ring-amber-300/40' : ''"
             >
+              <div
+                v-if="shouldShowDayDivider(idx)"
+                data-testid="day-divider"
+                class="my-4 flex items-center gap-3"
+              >
+                <div class="h-px flex-1 bg-chat-border" />
+                <span class="shrink-0 rounded-full bg-app-secondary px-3 py-1 text-[11px] font-semibold tracking-wide text-app-muted">{{ dayDividerLabel(msg.createdAt) }}</span>
+                <div class="h-px flex-1 bg-chat-border" />
+              </div>
+              <div
+                v-if="shouldShowUnreadDivider(msg, idx)"
+                data-testid="unread-divider"
+                class="my-3 flex items-center gap-2 px-2"
+              >
+                <div class="h-px flex-1 bg-red-500/60" />
+                <span class="rounded-full bg-red-500 px-2 py-0.5 text-[11px] font-bold leading-none text-white">New</span>
+              </div>
               <MessageBubble
                 :message="msg"
                 :show-header="shouldShowHeader(idx)"
@@ -182,7 +199,7 @@
         data-testid="history-loading-spinner"
         class="pointer-events-none absolute top-2 left-0 right-0 z-10 flex justify-center"
       >
-        <div class="inline-flex items-center gap-2 rounded-full border border-chat-border bg-chat-header/90 px-2.5 py-1 text-[11px] text-gray-300 backdrop-blur">
+        <div class="inline-flex items-center gap-2 rounded-full border border-chat-border bg-app-tertiary/95 px-2.5 py-1 text-[11px] text-app-secondaryText backdrop-blur">
           <svg class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <circle class="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3" />
             <path class="opacity-90" d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
@@ -196,7 +213,7 @@
         data-testid="conversation-loading-overlay"
         class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-chat-bg/65 backdrop-blur-[1px]"
       >
-        <div class="inline-flex items-center gap-2 rounded-full border border-chat-border bg-chat-header/90 px-3 py-1.5 text-xs text-gray-200">
+        <div class="inline-flex items-center gap-2 rounded-full border border-chat-border bg-app-tertiary/95 px-3 py-1.5 text-xs text-app-secondaryText">
           <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <circle class="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3" />
             <path class="opacity-90" d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
@@ -209,7 +226,7 @@
         <button
           v-if="!isAtBottom"
           data-testid="scroll-to-bottom-btn"
-          class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-full border border-chat-border bg-chat-header/90 px-4 py-2.5 text-sm font-medium text-white shadow-xl backdrop-blur hover:bg-chat-header transition-colors"
+          class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-full border border-chat-border bg-app-tertiary/95 px-3.5 py-2 text-[13px] font-semibold text-app-secondaryText shadow-xl backdrop-blur transition-colors hover:bg-app-tertiary"
           aria-label="Scroll to latest message"
           @click="handleScrollDownBtn"
         >
@@ -218,7 +235,7 @@
           </svg>
           <span
             v-if="unreadWhileScrolledAway > 0"
-            class="rounded-full bg-accent px-2 py-1 text-xs font-semibold leading-none"
+            class="rounded-full bg-accent px-2 py-0.5 text-[11px] font-bold leading-none text-app-onAccent"
           >{{ unreadWhileScrolledAway }}</span>
         </button>
       </Transition>
@@ -252,38 +269,40 @@
 
     <div
       v-if="channelCallDialogOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      class="dlg-overlay z-50"
+      data-testid="channel-call-dialog"
       @click.self="closeChannelCallDialog"
     >
-      <div class="w-full max-w-md overflow-hidden rounded-xl border border-chat-border bg-chat-header shadow-2xl">
-        <div class="border-b border-chat-border px-4 py-3">
-          <div class="text-sm font-semibold text-white">Start team call</div>
-          <div class="mt-1 text-xs text-gray-400">Select members to invite. You will be added automatically.</div>
+      <div class="dlg-window" role="dialog" aria-modal="true" aria-label="Start team call">
+        <div class="dlg-head">
+          <div class="dlg-title">Start team call</div>
+          <div class="dlg-sub">Select members to invite. You will be added automatically.</div>
         </div>
 
-        <div v-if="channelCallError" class="border-b border-chat-border px-4 py-2 text-xs text-red-300">
+        <div v-if="channelCallError" class="dlg-note dlg-note-danger">
           {{ channelCallError }}
         </div>
 
-        <div class="border-b border-chat-border px-4 py-3">
+        <div class="dlg-search">
+          <CallIcon name="search" :size="15" class="shrink-0 text-app-muted" />
           <input
             v-model="channelCallSearch"
             type="text"
             data-testid="channel-call-invite-search"
             placeholder="Search by nickname or email..."
-            class="w-full rounded border border-chat-border bg-chat-input px-3 py-2 text-sm text-app-text placeholder-app-muted outline-none focus:border-accent"
+            class="dlg-search-input"
             autofocus
           >
         </div>
 
-        <div class="max-h-72 overflow-y-auto">
-          <div v-if="channelCallLoading" class="px-4 py-6 text-center text-xs text-gray-400">
+        <div class="dlg-list">
+          <div v-if="channelCallLoading" class="dlg-empty">
             Loading members...
           </div>
-          <div v-else-if="channelCallMembers.length === 0" class="px-4 py-6 text-center text-xs text-gray-400">
+          <div v-else-if="channelCallMembers.length === 0" class="dlg-empty">
             No other members available
           </div>
-          <div v-else-if="filteredChannelCallMembers.length === 0" class="px-4 py-6 text-center text-xs text-gray-400">
+          <div v-else-if="filteredChannelCallMembers.length === 0" class="dlg-empty">
             No members match your search.
           </div>
           <template v-else>
@@ -291,41 +310,41 @@
               v-for="member in filteredChannelCallMembers"
               :key="member.userId"
               :data-testid="`channel-call-invite-candidate-${member.userId}`"
-              class="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-white/5"
+              class="dlg-row"
               @click="toggleChannelCallInvitee(member.userId)"
             >
-              <input
-                type="checkbox"
-                class="h-4 w-4"
-                :checked="selectedChannelCallInvitees.includes(member.userId)"
-                @click.stop
-                @change="toggleChannelCallInvitee(member.userId)"
-              >
               <UserAvatar
                 :user-id="member.userId"
                 :display-name="member.displayName || member.email"
                 :avatar-url="member.avatarUrl"
                 :custom-status="member.customStatus"
                 size="sm"
+                class="!h-[34px] !w-[34px]"
               />
-              <div class="min-w-0">
-                <div class="truncate text-sm text-white">{{ member.displayName || member.email }}</div>
-                <div class="truncate text-xs text-gray-400">{{ member.email }}</div>
+              <div class="min-w-0 flex-1">
+                <div class="dlg-row-name truncate">{{ member.displayName || member.email }}</div>
+                <div class="dlg-row-sub truncate">{{ member.email }}</div>
               </div>
+              <span
+                class="dlg-check"
+                :class="selectedChannelCallInvitees.includes(member.userId) ? 'dlg-check-on' : ''"
+              >
+                <CallIcon v-if="selectedChannelCallInvitees.includes(member.userId)" name="check" :size="13" />
+              </span>
             </button>
           </template>
         </div>
 
-        <div class="flex justify-end gap-2 border-t border-chat-border px-4 py-3">
-          <button class="rounded px-3 py-1.5 text-xs text-gray-300 hover:bg-white/10" @click="closeChannelCallDialog">
+        <div class="dlg-foot-end">
+          <button class="dlg-btn dlg-btn-ghost" @click="closeChannelCallDialog">
             Cancel
           </button>
           <button
-            class="rounded bg-accent px-3 py-1.5 text-xs text-white disabled:opacity-50"
+            class="dlg-btn dlg-btn-primary"
             :disabled="channelCallLoading || startingChannelCall"
             @click="startChannelCall"
           >
-            Start call
+            {{ startingChannelCall ? 'Starting...' : 'Start call' }}
           </button>
         </div>
       </div>
@@ -356,6 +375,7 @@ import MessageBubble from './MessageBubble.vue'
 import MessageInput from './MessageInput.vue'
 import MembersPanel from './MembersPanel.vue'
 import UserAvatar from './UserAvatar.vue'
+import CallIcon from './CallIcon.vue'
 import BusyCallConfirmDialog from './BusyCallConfirmDialog.vue'
 import VirtualMessageTimeline from './chat/VirtualMessageTimeline.vue'
 import { OUTBOUND_PERSISTENCE_FAILURE_REASON, useOfflineQueue } from '@/composables/useOfflineQueue'
@@ -732,6 +752,49 @@ function shouldShowHeader(idx: number): boolean {
   const prevTime = new Date(prev.createdAt).getTime()
   const currTime = new Date(curr.createdAt).getTime()
   return currTime - prevTime > 5 * 60 * 1000
+}
+
+function localDayKey(createdAt: string): string {
+  const d = new Date(createdAt)
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+}
+
+function shouldShowDayDivider(idx: number): boolean {
+  if (idx === 0) return true
+  return localDayKey(messages.value[idx - 1].createdAt) !== localDayKey(messages.value[idx].createdAt)
+}
+
+function dayDividerLabel(createdAt: string): string {
+  const date = new Date(createdAt)
+  const options: Intl.DateTimeFormatOptions = { month: 'long', day: 'numeric' }
+  if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric'
+  return date.toLocaleDateString(undefined, options)
+}
+
+// Snapshot of where "new" messages begin when the conversation is opened. Derived
+// from the unread count at switch time; degrades to no divider when the boundary
+// message is outside the loaded window.
+const firstUnreadSeq = ref<bigint | null>(null)
+
+function computeFirstUnreadSeq(conversationId: string): bigint | null {
+  const conv = chatStore.channels.find(item => item.id === conversationId)
+    ?? chatStore.directMessages.find(item => item.id === conversationId)
+  if (!conv || conv.unread <= 0) return null
+  if (typeof conv.lastMessageSeq !== 'bigint' || conv.lastMessageSeq <= 0n) return null
+  const boundary = conv.lastMessageSeq - BigInt(conv.unread) + 1n
+  return boundary > 0n ? boundary : 1n
+}
+
+watch(() => chatStore.activeChannelId, (conversationId) => {
+  firstUnreadSeq.value = conversationId ? computeFirstUnreadSeq(conversationId) : null
+}, { immediate: true })
+
+function shouldShowUnreadDivider(msg: Message, idx: number): boolean {
+  const boundary = firstUnreadSeq.value
+  if (boundary === null) return false
+  if (msg.channelSeq < boundary) return false
+  if (idx === 0) return true
+  return messages.value[idx - 1].channelSeq < boundary
 }
 
 function threadReplyCount(rootMessageId: string): number {

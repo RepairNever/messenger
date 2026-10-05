@@ -1,24 +1,30 @@
 <template>
-  <div class="relative mx-1 group">
+  <div
+    class="relative mx-1 group flex min-h-8 items-center rounded-full text-[15px] transition-colors"
+    :class="active
+      ? 'bg-sidebar-active text-app-selectionText'
+      : (hasUnread && !muted ? 'text-sidebar-text hover:bg-sidebar-hover' : 'text-sidebar-textMuted hover:bg-sidebar-hover')"
+  >
     <button
-      class="flex min-h-9 items-center gap-2 px-3 py-1 w-full text-left text-[15px] transition-colors rounded"
-      :class="active
-        ? 'bg-sidebar-active text-white'
-        : (hasUnread && !muted ? 'text-sidebar-text hover:bg-sidebar-hover' : 'text-sidebar-textMuted hover:bg-sidebar-hover')"
+      class="flex min-h-8 w-full items-center gap-2 rounded-full px-3 pl-[0.15rem] py-1 text-left transition-colors"
+      :class="{ 'pr-10': $slots.actions }"
       v-bind="$attrs"
     >
-      <span class="shrink-0 w-8 flex items-center justify-center">
+      <span class="shrink-0 w-7 flex items-center justify-center">
         <slot name="icon" />
       </span>
       <span class="truncate flex-1" :class="[
-        hasUnread && !muted ? 'font-semibold text-white' : 'font-normal text-sidebar-text',
+        active
+          ? 'font-semibold text-app-selectionText'
+          : (hasUnread && !muted ? 'font-semibold text-white' : 'font-normal text-sidebar-text'),
       ]">
         <slot />
       </span>
       <!-- Muted indicator (bell-slash icon) -->
       <span
         v-if="muted"
-        class="shrink-0 w-4 h-4 text-sidebar-textMuted opacity-60"
+        class="shrink-0 w-4 h-4 opacity-60"
+        :class="active ? 'text-app-selectionText' : 'text-sidebar-textMuted'"
         title="Notifications muted"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
@@ -36,7 +42,12 @@
         {{ unread }}
       </span>
     </button>
-    <div class="absolute right-7 top-1/2 -translate-y-1/2 z-30">
+    <div
+      v-if="$slots.actions"
+      class="absolute right-1 top-1/2 z-30 -translate-y-1/2 items-center gap-0.5 rounded-md bg-inherit p-0.5"
+      :class="actionsPinned ? 'flex' : 'hidden group-hover:flex group-focus-within:flex'"
+      data-testid="sidebar-item-actions"
+    >
       <slot name="actions" />
     </div>
   </div>
@@ -49,6 +60,7 @@ const props = defineProps<{
   active?: boolean
   unread?: number
   muted?: boolean
+  actionsPinned?: boolean
 }>()
 
 const hasUnread = computed(() => (props.unread ?? 0) > 0)

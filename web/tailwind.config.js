@@ -30,6 +30,7 @@ export default {
         accent: {
           DEFAULT: 'rgb(var(--color-accent) / <alpha-value>)',
           hover: 'rgb(var(--color-accent-hover) / <alpha-value>)',
+          text: 'rgb(var(--color-accent-text) / <alpha-value>)',
         },
         public_id: 'rgb(var(--color-task-id) / <alpha-value>)',
         app: {
@@ -38,6 +39,7 @@ export default {
           tertiary: 'rgb(var(--color-bg-tertiary) / <alpha-value>)',
           surface: 'rgb(var(--color-surface) / <alpha-value>)',
           hover: 'rgb(var(--color-surface-hover) / <alpha-value>)',
+          input: 'rgb(var(--color-input) / <alpha-value>)',
           divider: 'rgb(var(--color-divider) / <alpha-value>)',
           text: 'rgb(var(--color-text-primary) / <alpha-value>)',
           muted: 'rgb(var(--color-text-muted) / <alpha-value>)',

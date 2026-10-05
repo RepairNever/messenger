@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CachedMessage } from '@/services/db/msgnrDb'
-import type { Message } from '@/stores/chat'
+import type { CachedConversation, CachedMessage } from '@/services/db/msgnrDb'
+import type { DirectMessage, Message } from '@/stores/chat'
+import { NotificationLevel } from '@/shared/proto/packets_pb'
 
 const cacheState = vi.hoisted(() => {
   const rows: CachedMessage[] = []
@@ -11,12 +12,23 @@ const cacheState = vi.hoisted(() => {
     rows.splice(0, rows.length, ...nextRows)
   })
 
+  const conversationRows: CachedConversation[] = []
+  const clearConversations = vi.fn(async () => undefined)
+  const bulkPutConversations = vi.fn(async (nextRows: CachedConversation[]) => {
+    conversationRows.splice(0, conversationRows.length, ...nextRows)
+  })
+  const toArrayConversations = vi.fn(async () => [...conversationRows])
+
   return {
     rows,
     deleteMessages,
     equalsConversation,
     whereMessages,
     bulkPutMessages,
+    conversationRows,
+    clearConversations,
+    bulkPutConversations,
+    toArrayConversations,
     transaction: vi.fn(async (_mode: string, _table: unknown, operation: () => Promise<void>) => operation()),
   }
 })
@@ -28,10 +40,15 @@ vi.mock('@/services/db/msgnrDb', () => ({
       where: cacheState.whereMessages,
       bulkPut: cacheState.bulkPutMessages,
     },
+    conversations: {
+      clear: cacheState.clearConversations,
+      bulkPut: cacheState.bulkPutConversations,
+      toArray: cacheState.toArrayConversations,
+    },
   },
 }))
 
-import { cacheMessages } from '@/services/db/cache'
+import { cacheMessages, cacheConversations, loadCachedConversations } from '@/services/db/cache'
 
 function buildMessage(sequence: number, overrides: Partial<Message> = {}): Message {
   return {
@@ -74,5 +91,48 @@ describe('cacheMessages', () => {
       Array.from({ length: 50 }, (_, index) => String(index + 11)),
     )
     expect(cacheState.rows.some(row => row.id === 'message-100' || row.id === 'message-101')).toBe(false)
+  })
+})
+
+describe('cacheConversations', () => {
+  beforeEach(() => {
+    cacheState.conversationRows.splice(0)
+    vi.clearAllMocks()
+  })
+
+  it('persists and restores DM lastActivityAt for sidebar ordering', async () => {
+    const dm: DirectMessage = {
+      id: 'dm-1',
+      userId: 'user-2',
+      displayName: 'Bob',
+      presence: 'offline',
+      unread: 0,
+      lastMessageSeq: 4n,
+      lastActivityAt: '2026-01-01T00:00:00.000Z',
+      notificationLevel: NotificationLevel.ALL,
+    }
+
+    await cacheConversations([], [dm])
+    const restored = await loadCachedConversations()
+
+    expect(restored?.dms).toHaveLength(1)
+    expect(restored?.dms[0].lastActivityAt).toBe('2026-01-01T00:00:00.000Z')
+    expect(restored?.dms[0].lastMessageSeq).toBe(4n)
+  })
+
+  it('restores DMs without lastActivityAt when the cache predates the field', async () => {
+    const dm: DirectMessage = {
+      id: 'dm-2',
+      userId: 'user-3',
+      displayName: 'Carol',
+      presence: 'offline',
+      unread: 1,
+      notificationLevel: NotificationLevel.ALL,
+    }
+
+    await cacheConversations([], [dm])
+    const restored = await loadCachedConversations()
+
+    expect(restored?.dms[0].lastActivityAt).toBeUndefined()
   })
 })

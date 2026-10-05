@@ -62,6 +62,61 @@ describe('ThreadWorkspace', () => {
     vi.restoreAllMocks()
   })
 
+  it('keeps the mounted pinned thread active while sending in another main DM, and deactivates on close', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.state = 'LIVE_SYNCED'
+    chat.bootstrapped = true
+    chat.setClientActive(true)
+    useAuthStore().user = { id: 'user-1', email: 'ada@example.com', displayName: 'Ada', role: 'member' }
+    chat.directMessages = ['dm-thread', 'dm-main'].map(id => ({
+      id, userId: `user-${id}`, displayName: id, presence: 'online' as const,
+      unread: 0, notificationLevel: NotificationLevel.ALL,
+    }))
+    chat.messages = { 'dm-thread': [{
+      id: 'root-1', channelId: 'dm-thread', senderId: 'user-2', senderName: 'Bob', body: 'root',
+      channelSeq: 1n, threadSeq: 0n, mentionedUserIds: [], mentionEveryone: false,
+      createdAt: '2026-03-06T00:00:00Z', reactions: [], myReactions: [],
+    }] }
+    vi.spyOn(chat, 'ensureConversationHistory').mockResolvedValue(undefined)
+    vi.spyOn(ws, 'sendSubscribeThread').mockReturnValue(true)
+    vi.spyOn(ws, 'sendMessage').mockReturnValue(true)
+    const wrapper = mount(ThreadWorkspace, {
+      props: { conversationId: 'dm-thread', rootMessageId: 'root-1', mode: 'pinned' },
+      global: { plugins: [pinia], stubs: {
+        MessageBubble: { props: ['message'], template: '<div>{{ message.body }}</div>' },
+        MessageInput: true,
+      } },
+    })
+    try {
+      await flushPromises()
+      await chat.selectChannel('dm-main')
+      chat.openDirectMessage(chat.directMessages[1])
+      chat.sendMessageToConversation('dm-main', 'main DM message')
+      chat.handleServerEvent(create(ServerEventSchema, {
+        eventSeq: 1n, eventId: 'pinned-reply-while-composing',
+        payload: { case: 'messageCreated', value: create(MessageEventSchema, {
+          conversationId: 'dm-thread', messageId: 'reply-1', senderId: 'user-2', body: 'visible reply',
+          channelSeq: 2n, threadSeq: 1n, threadRootMessageId: 'root-1',
+        }) },
+      }))
+      await nextTick()
+
+      expect(wrapper.text()).toContain('visible reply')
+      expect(chat.activeChannelId).toBe('dm-main')
+      expect(chat.activeThreadConversationId).toBe('dm-thread')
+      expect(chat.activeThreadRootId).toBe('root-1')
+      expect(ws.sendSubscribeThread).toHaveBeenCalledWith('dm-thread', 'root-1', 1n)
+    } finally {
+      wrapper.unmount()
+      expect(chat.isThreadPanelOpen).toBe(false)
+      chat.resetRuntimeState()
+      vi.restoreAllMocks()
+    }
+  })
+
   it('does not auto-scroll new replies when user is away from bottom', async () => {
     const chat = useChatStore()
     const ws = useWsStore()

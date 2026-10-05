@@ -68,7 +68,7 @@
                 <button
                   v-else-if="isDescriptionChange(item)"
                   type="button"
-                  class="text-accent hover:text-accent-hover underline underline-offset-2"
+                  class="text-accent-text hover:text-accent-text underline underline-offset-2"
                   :data-testid="`task-change-history-diff-${item.id}`"
                   @click="toggleDescriptionDiff(item.id)"
                 >
@@ -151,7 +151,7 @@
                   <button
                     v-if="descriptionDiffLines.length > COLLAPSE_LINE_COUNT"
                     type="button"
-                    class="text-xs text-accent hover:text-accent-hover"
+                    class="text-xs text-accent-text hover:text-accent-text"
                     data-testid="task-change-history-diff-collapse"
                     @click="diffExpanded = !diffExpanded"
                   >
@@ -240,7 +240,7 @@
 
     <p v-if="loadError" class="mt-3 text-sm text-app-warning" data-testid="task-change-history-error">
       {{ loadError }}
-      <button type="button" class="ml-2 text-accent hover:text-accent-hover underline" @click="loadNextPage">Retry</button>
+      <button type="button" class="ml-2 text-accent-text hover:text-accent-text underline" @click="loadNextPage">Retry</button>
     </p>
 
     <div

@@ -53,7 +53,7 @@
   .markdown-body li { margin: 2px 0; padding-left: 2px; }
   .markdown-body li::marker { color: rgb(var(--color-text-muted)); }
   .markdown-body ol > li::marker {
-    color: rgb(var(--color-accent));
+    color: rgb(var(--color-accent-text));
     font-weight: 500;
     font-variant-numeric: tabular-nums;
   }
@@ -239,7 +239,7 @@
   }
 
   .markdown-body a {
-    color: rgb(var(--color-accent));
+    color: rgb(var(--color-accent-text));
     text-decoration: underline;
     text-decoration-color: rgb(var(--color-selection-border) / 0.45);
     text-underline-offset: 2px;
@@ -248,8 +248,8 @@
   }
 
   .markdown-body a:hover {
-    color: rgb(var(--color-accent-hover));
-    text-decoration-color: rgb(var(--color-accent));
+    color: rgb(var(--color-accent-text));
+    text-decoration-color: rgb(var(--color-accent-text) / 0.6);
   }
 
   .markdown-body img {

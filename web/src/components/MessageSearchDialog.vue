@@ -2,7 +2,7 @@
   <Teleport to="body">
     <div
       v-if="open"
-      class="fixed inset-0 z-50 flex items-start justify-center bg-black/60 px-3 py-16"
+      class="dlg-overlay z-50 items-start px-3 py-16"
       data-testid="message-search-dialog"
       @click.self="emit('close')"
       @keydown.esc.prevent="emit('close')"
@@ -11,9 +11,9 @@
         role="dialog"
         aria-modal="true"
         aria-label="Message search"
-        class="flex w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-chat-border bg-chat-header shadow-2xl"
+        class="dlg-window max-w-2xl"
       >
-        <header class="border-b border-chat-border px-4 py-3">
+        <header class="dlg-head border-b border-app-divider">
           <div class="flex items-center gap-2">
             <svg class="h-4 w-4 shrink-0 text-app-muted" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <circle cx="11" cy="11" r="8" />
@@ -30,7 +30,7 @@
             >
             <button
               type="button"
-              class="flex h-7 w-7 shrink-0 items-center justify-center rounded text-app-muted transition-colors hover:bg-chat-msgHover hover:text-app-text"
+              class="flex h-7 w-7 shrink-0 items-center justify-center rounded text-app-muted transition-colors hover:bg-app-hover hover:text-app-text"
               aria-label="Close search"
               @click="emit('close')"
             >
@@ -46,30 +46,30 @@
         </header>
 
         <div class="max-h-[64vh] min-h-52 overflow-y-auto">
-          <div v-if="query.trim().length < 2" class="px-4 py-8 text-center text-sm text-app-muted">
+          <div v-if="query.trim().length < 2" class="dlg-empty">
             Type at least 2 characters.
           </div>
 
-          <div v-else-if="loading && results.length === 0" class="px-4 py-8 text-center text-sm text-app-muted">
+          <div v-else-if="loading && results.length === 0" class="dlg-empty">
             Searching...
           </div>
 
-          <div v-else-if="error && results.length === 0" class="px-4 py-8 text-center text-sm text-red-300">
+          <div v-else-if="error && results.length === 0" class="dlg-empty text-app-danger">
             {{ error }}
           </div>
 
-          <div v-else-if="results.length === 0" class="px-4 py-8 text-center text-sm text-app-muted">
+          <div v-else-if="results.length === 0" class="dlg-empty">
             No matching messages.
           </div>
 
-          <div v-else class="divide-y divide-chat-border/70">
+          <div v-else class="divide-y divide-app-divider/70">
             <button
               v-for="item in results"
               :key="item.id"
               type="button"
               data-testid="message-search-result"
               :data-result-id="item.id"
-              class="block w-full px-4 py-3 text-left transition-colors hover:bg-chat-msgHover focus:bg-chat-msgHover focus:outline-none"
+              class="block w-full px-4 py-3 text-left transition-colors hover:bg-app-hover focus:bg-app-hover focus:outline-none"
               @click="openResult(item)"
             >
               <div class="flex items-start gap-3">
@@ -221,7 +221,7 @@ function sourceLabel(source: MessageSearchSource) {
 }
 
 function sourceClass(source: MessageSearchSource) {
-  if (source === 'task_comment') return 'border-accent/30 bg-accent/10 text-accent'
+  if (source === 'task_comment') return 'border-accent/30 bg-accent/10 text-accent-text'
   if (source === 'task_comment_thread') return 'border-app-selection bg-app-selection text-app-selectionText'
   return 'border-chat-border bg-chat-input text-app-secondaryText'
 }

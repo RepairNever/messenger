@@ -79,6 +79,7 @@ function dmToCached(dm: DirectMessage): CachedConversation {
     unread: dm.unread,
     hasUnreadThreadReplies: dm.hasUnreadThreadReplies,
     lastMessageSeq: bigintToStr(dm.lastMessageSeq),
+    lastActivityAt: dm.lastActivityAt,
     notificationLevel: dm.notificationLevel,
     updatedAt: new Date().toISOString(),
   }
@@ -110,6 +111,7 @@ function cachedToDm(c: CachedConversation): DirectMessage {
     unread: c.unread,
     hasUnreadThreadReplies: c.hasUnreadThreadReplies,
     lastMessageSeq: strToBigint(c.lastMessageSeq),
+    lastActivityAt: c.lastActivityAt,
     notificationLevel: (c.notificationLevel ?? 0) as NotificationLevel,
   }
 }

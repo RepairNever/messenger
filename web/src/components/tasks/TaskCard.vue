@@ -176,7 +176,7 @@
           </span>
           <button
             v-if="!showSubtaskForm"
-            class="text-xs text-accent hover:text-accent-hover transition-colors"
+            class="text-xs text-accent-text hover:text-accent-text transition-colors"
             @click="openSubtaskForm"
           >
             + Add subtask
@@ -449,17 +449,17 @@
     <div
       v-if="descriptionHistoryModalOpen"
       data-testid="task-description-restore-modal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      class="dlg-overlay z-50"
       @click.self="closeDescriptionHistoryModal"
     >
-      <div class="flex h-[90vh] w-[90vw] max-h-none max-w-none flex-col overflow-hidden rounded-xl border border-chat-border bg-chat-header p-4 shadow-2xl">
-        <h3 class="mb-3 shrink-0 text-base font-semibold text-white">Description History</h3>
+      <div class="dlg-window h-[90vh] w-[90vw] max-w-none max-h-none p-4">
+        <h3 class="dlg-title mb-3 shrink-0">Description History</h3>
         <div class="grid flex-1 min-h-0 gap-4 md:grid-cols-[280px_minmax(0,1fr)]">
           <aside class="flex min-h-0 flex-col rounded border border-chat-border bg-chat-input/40 p-2">
-            <div class="mb-2 text-xs uppercase tracking-wide text-gray-400">Versions</div>
-            <p v-if="descriptionHistoryLoading" class="px-2 py-2 text-xs text-gray-500">Loading versions...</p>
-            <p v-else-if="descriptionHistoryError" class="px-2 py-2 text-xs text-red-400">{{ descriptionHistoryError }}</p>
-            <p v-else-if="descriptionHistoryItems.length === 0" class="px-2 py-2 text-xs text-gray-500">No versions yet</p>
+            <div class="mb-2 text-xs uppercase tracking-wide text-app-muted">Versions</div>
+            <p v-if="descriptionHistoryLoading" class="px-2 py-2 text-xs text-app-muted">Loading versions...</p>
+            <p v-else-if="descriptionHistoryError" class="px-2 py-2 text-xs text-app-danger">{{ descriptionHistoryError }}</p>
+            <p v-else-if="descriptionHistoryItems.length === 0" class="px-2 py-2 text-xs text-app-muted">No versions yet</p>
             <ul
               v-else
               data-testid="task-description-history-list"

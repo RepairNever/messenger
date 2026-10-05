@@ -13,7 +13,7 @@
         <div class="shrink-0">
           <svg
             v-if="needRefresh"
-            class="h-5 w-5 text-accent"
+            class="h-5 w-5 text-accent-text"
             viewBox="0 0 20 20"
             fill="currentColor"
             aria-hidden="true"

@@ -2,14 +2,14 @@
   <Teleport to="body">
     <div
       v-if="open"
-      class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/70 p-4"
+      class="dlg-overlay z-[10000]"
       @click.self="close"
     >
-      <div class="flex max-h-[min(680px,calc(100vh-2rem))] w-full max-w-lg flex-col rounded-lg border border-chat-border bg-sidebar-bg shadow-2xl">
-        <div class="flex items-center justify-between border-b border-chat-border px-4 py-3">
-          <h2 class="text-sm font-semibold text-app-text">Forward message</h2>
+      <div class="dlg-window max-w-lg" role="dialog" aria-modal="true" aria-label="Forward message">
+        <div class="dlg-head flex items-center justify-between">
+          <h2 class="dlg-title">Forward message</h2>
           <button
-            class="rounded p-1 text-app-muted hover:bg-white/10 hover:text-app-text"
+            class="rounded p-1 text-app-muted hover:bg-app-hover hover:text-app-text"
             title="Close"
             @click="close"
           >
@@ -19,23 +19,27 @@
           </button>
         </div>
 
-        <div class="border-b border-chat-border p-3">
+        <div class="dlg-search mx-0 mb-2">
+          <svg class="h-[15px] w-[15px] shrink-0 text-app-muted" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
           <input
             v-model="query"
-            class="w-full rounded-md border border-chat-border bg-chat-input px-3 py-2 text-sm text-app-text placeholder:text-app-muted focus:border-accent focus:outline-none"
+            class="dlg-search-input"
             placeholder="Search conversations"
             @keydown.esc="close"
           >
         </div>
 
-        <div class="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-          <div v-if="loading" class="px-3 py-6 text-center text-sm text-app-muted">
+        <div class="dlg-list">
+          <div v-if="loading" class="dlg-empty">
             Loading targets...
           </div>
-          <div v-else-if="error" class="px-3 py-6 text-center text-sm text-red-300">
+          <div v-else-if="error" class="dlg-empty text-app-danger">
             {{ error }}
           </div>
-          <div v-else-if="filteredConversations.length === 0" class="px-3 py-6 text-center text-sm text-app-muted">
+          <div v-else-if="filteredConversations.length === 0" class="dlg-empty">
             No targets found
           </div>
           <template v-else>
@@ -44,32 +48,32 @@
               <button
                 v-for="target in filteredConversations"
                 :key="`conversation:${target.conversation_id}`"
-                class="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-white/10"
-                :class="selectedKey === `conversation:${target.conversation_id}` ? 'bg-accent/15 text-app-text' : 'text-app-text'"
+                class="dlg-row"
+                :class="selectedKey === `conversation:${target.conversation_id}` ? 'bg-accent/15' : ''"
                 @click="selectedKey = `conversation:${target.conversation_id}`"
               >
-                <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-chat-input text-xs font-semibold text-public_id">
+                <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-app-input text-xs font-semibold text-public_id">
                   {{ target.kind === 'dm' ? 'DM' : '#' }}
                 </span>
                 <span class="min-w-0 flex-1">
-                  <span class="block truncate text-sm">{{ target.title }}</span>
-                  <span class="block truncate text-xs text-app-muted">{{ target.kind === 'dm' ? 'Direct message' : target.visibility }}</span>
+                  <span class="dlg-row-name block truncate">{{ target.title }}</span>
+                  <span class="dlg-row-sub block truncate">{{ target.kind === 'dm' ? 'Direct message' : target.visibility }}</span>
                 </span>
               </button>
             </section>
           </template>
         </div>
 
-        <div class="flex items-center justify-end gap-2 border-t border-chat-border px-4 py-3">
+        <div class="dlg-foot-end">
           <button
-            class="rounded-md px-3 py-1.5 text-sm text-app-muted hover:bg-white/10 hover:text-app-text"
+            class="dlg-btn dlg-btn-ghost"
             :disabled="submitting"
             @click="close"
           >
             Cancel
           </button>
           <button
-            class="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+            class="dlg-btn dlg-btn-primary"
             :disabled="!selectedKey || submitting"
             @click="submit"
           >

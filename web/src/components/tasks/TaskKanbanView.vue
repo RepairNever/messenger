@@ -54,7 +54,7 @@
           <div v-if="column.group.has_more" class="kanban-more">
             <button
               type="button"
-              class="text-xs text-accent hover:underline disabled:opacity-60 disabled:no-underline"
+              class="text-xs text-accent-text hover:underline disabled:opacity-60 disabled:no-underline"
               :disabled="column.group.loading_more"
               @click="tasksStore.loadMoreGroupedStatus(column.statusId)"
             >

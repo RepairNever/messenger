@@ -15,7 +15,7 @@
 
       <!-- Header -->
       <header class="flex items-center gap-3 px-6 py-4 border-b border-chat-border shrink-0">
-        <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <svg class="w-5 h-5 text-accent-text" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/>
         </svg>
         <h1 class="text-lg font-bold text-white">Admin Panel</h1>
@@ -273,65 +273,65 @@
 
     <!-- Create User dialog -->
     <Teleport to="body">
-      <div v-if="createUserOpen" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" @click.self="createUserOpen = false">
-        <div class="bg-[#222529] border border-chat-border rounded-xl shadow-2xl w-full max-w-sm p-6">
-          <h3 class="text-lg font-bold text-white mb-4">Create User</h3>
+      <div v-if="createUserOpen" class="dlg-overlay z-50" @click.self="createUserOpen = false">
+        <div class="dlg-window p-6">
+          <h3 class="dlg-title mb-4">Create User</h3>
           <div class="space-y-3">
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Email</label>
+              <label class="dlg-label">Email</label>
               <input
                 v-model="newUser.email"
                 type="email"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
                 placeholder="user@example.com"
               />
             </div>
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Password</label>
+              <label class="dlg-label">Password</label>
               <input
                 v-model="newUser.password"
                 type="password"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
                 placeholder="••••••••"
               />
             </div>
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Display Name</label>
+              <label class="dlg-label">Display Name</label>
               <input
                 v-model="newUser.display_name"
                 type="text"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
                 placeholder="John Doe"
               />
             </div>
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Role</label>
+              <label class="dlg-label">Role</label>
               <select
                 v-model="newUser.role"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
               >
                 <option value="member">Member</option>
                 <option value="admin">Admin</option>
                 <option value="bot">Bot</option>
               </select>
             </div>
-            <label class="flex items-start gap-3 rounded border border-chat-border bg-chat-input px-3 py-2 text-sm text-gray-200 cursor-pointer">
+            <label class="flex items-start gap-3 rounded border border-app-divider bg-app-input px-3 py-2 text-sm text-app-text cursor-pointer">
               <input
                 v-model="newUser.need_change_password"
                 type="checkbox"
-                class="mt-0.5 h-4 w-4 rounded border-chat-border bg-transparent text-accent focus:ring-accent"
+                class="mt-0.5 h-4 w-4 rounded border-app-divider bg-transparent text-accent-text focus:ring-accent"
               />
               <span>Require password change upon login</span>
             </label>
           </div>
-          <div v-if="createUserError" class="text-red-400 text-sm mt-3">{{ createUserError }}</div>
+          <div v-if="createUserError" class="text-app-danger text-sm mt-3">{{ createUserError }}</div>
           <div class="flex gap-3 mt-5">
             <button
-              class="flex-1 py-2 rounded bg-white/10 hover:bg-white/20 text-gray-200 text-sm transition-colors"
+              class="dlg-btn dlg-btn-ghost flex-1"
               @click="createUserOpen = false"
             >Cancel</button>
             <button
-              class="flex-1 py-2 rounded bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
+              class="dlg-btn dlg-btn-primary flex-1"
               :disabled="createUserLoading"
               @click="submitCreateUser"
             >{{ createUserLoading ? 'Creating...' : 'Create' }}</button>
@@ -340,71 +340,71 @@
       </div>
 
       <!-- Edit User dialog -->
-      <div v-if="editUserOpen" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" @click.self="editUserOpen = false">
-        <div class="bg-[#222529] border border-chat-border rounded-xl shadow-2xl w-full max-w-sm p-6">
-          <h3 class="text-lg font-bold text-white mb-4">Edit User</h3>
+      <div v-if="editUserOpen" class="dlg-overlay z-50" @click.self="editUserOpen = false">
+        <div class="dlg-window p-6">
+          <h3 class="dlg-title mb-4">Edit User</h3>
           <div class="space-y-3">
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Display Name</label>
+              <label class="dlg-label">Display Name</label>
               <input
                 v-model="editUserForm.display_name"
                 type="text"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
                 placeholder="John Doe"
               />
             </div>
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Email</label>
+              <label class="dlg-label">Email</label>
               <input
                 v-model="editUserForm.email"
                 type="email"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
                 placeholder="user@example.com"
               />
             </div>
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Role</label>
+              <label class="dlg-label">Role</label>
               <select
                 v-model="editUserForm.role"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
                 :disabled="editingUser?.role === 'owner'"
               >
                 <option value="member">Member</option>
                 <option value="admin">Admin</option>
                 <option value="bot">Bot</option>
               </select>
-              <p v-if="editingUser?.role === 'owner'" class="text-xs text-gray-500 mt-1">Owner role cannot be changed.</p>
+              <p v-if="editingUser?.role === 'owner'" class="text-xs text-app-muted mt-1">Owner role cannot be changed.</p>
             </div>
             <div v-if="editUserForm.role === 'bot'">
-              <label class="block text-sm text-gray-400 mb-1">Integration Token</label>
+              <label class="dlg-label">Integration Token</label>
               <input
                 v-model="editUserForm.integration_token"
                 type="text"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
                 placeholder="Set new static bearer token"
                 autocomplete="off"
               />
-              <p class="text-xs text-gray-500 mt-1">Leave blank to keep the current token. Saving a new token replaces the active one.</p>
+              <p class="text-xs text-app-muted mt-1">Leave blank to keep the current token. Saving a new token replaces the active one.</p>
             </div>
             <div v-else>
-              <label class="block text-sm text-gray-400 mb-1">New Password</label>
+              <label class="dlg-label">New Password</label>
               <input
                 v-model="editUserForm.password"
                 type="password"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
                 placeholder="Leave blank to keep current"
               />
             </div>
           </div>
-          <div v-if="editUserError" class="text-red-400 text-sm mt-3">{{ editUserError }}</div>
+          <div v-if="editUserError" class="text-app-danger text-sm mt-3">{{ editUserError }}</div>
           <div class="flex gap-3 mt-5">
             <button
-              class="flex-1 py-2 rounded bg-white/10 hover:bg-white/20 text-gray-200 text-sm transition-colors"
+              class="dlg-btn dlg-btn-ghost flex-1"
               :disabled="editUserLoading"
               @click="editUserOpen = false"
             >Cancel</button>
             <button
-              class="flex-1 py-2 rounded bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors disabled:opacity-50"
+              class="dlg-btn dlg-btn-primary flex-1"
               :disabled="editUserLoading"
               @click="submitEditUser"
             >{{ editUserLoading ? 'Saving...' : 'Save' }}</button>
@@ -413,24 +413,24 @@
       </div>
 
       <!-- Create Channel dialog -->
-      <div v-if="createChannelOpen" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" @click.self="createChannelOpen = false">
-        <div class="bg-[#222529] border border-chat-border rounded-xl shadow-2xl w-full max-w-md p-6">
-          <h3 class="text-lg font-bold text-white mb-4">Create Channel</h3>
+      <div v-if="createChannelOpen" class="dlg-overlay z-50" @click.self="createChannelOpen = false">
+        <div class="dlg-window max-w-md p-6">
+          <h3 class="dlg-title mb-4">Create Channel</h3>
           <div class="space-y-3">
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Name</label>
+              <label class="dlg-label">Name</label>
               <input
                 v-model="newChannel.name"
                 type="text"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
                 placeholder="channel-name"
               />
             </div>
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Visibility</label>
+              <label class="dlg-label">Visibility</label>
               <select
                 v-model="newChannel.visibility"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
               >
                 <option value="public">Public</option>
                 <option value="private">Private</option>
@@ -440,24 +440,24 @@
               <input
                 v-model="newChannel.add_all_users"
                 type="checkbox"
-                class="mt-0.5 h-4 w-4 rounded border-chat-border bg-transparent text-accent focus:ring-accent"
+                class="mt-0.5 h-4 w-4 rounded border-app-divider bg-transparent text-accent-text focus:ring-accent"
               />
               <span>
                 Add all users to this channel
               </span>
             </label>
-            <div v-if="newChannel.visibility === 'private'" class="rounded border border-chat-border bg-chat-input p-3">
-              <div class="text-sm text-gray-300 mb-2">Select members</div>
+            <div v-if="newChannel.visibility === 'private'" class="rounded border border-app-divider bg-app-input p-3">
+              <div class="text-sm text-app-secondaryText mb-2">Select members</div>
               <div class="max-h-44 overflow-y-auto space-y-1">
                 <label
                   v-for="candidate in privateMemberCandidates"
                   :key="candidate.id"
-                  class="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-200 hover:bg-white/5"
+                  class="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-app-text hover:bg-app-hover"
                 >
                   <input
                     :checked="selectedPrivateMemberIds.includes(candidate.id)"
                     type="checkbox"
-                    class="h-4 w-4 rounded border-chat-border bg-transparent text-accent focus:ring-accent"
+                    class="h-4 w-4 rounded border-app-divider bg-transparent text-accent-text focus:ring-accent"
                     :data-testid="`private-member-checkbox-${candidate.id}`"
                     @change="togglePrivateMemberSelection(candidate.id)"
                   />
@@ -469,23 +469,23 @@
                   />
                   <span class="truncate">{{ candidate.display_name || candidate.email }}</span>
                 </label>
-                <div v-if="privateMemberCandidates.length === 0" class="px-2 py-1 text-xs text-gray-500">
+                <div v-if="privateMemberCandidates.length === 0" class="px-2 py-1 text-xs text-app-muted">
                   No active users available
                 </div>
               </div>
-              <div class="mt-2 text-xs text-gray-500">
+              <div class="mt-2 text-xs text-app-muted">
                 Private channel requires at least one selected member.
               </div>
             </div>
           </div>
-          <div v-if="createChannelError" class="text-red-400 text-sm mt-3">{{ createChannelError }}</div>
+          <div v-if="createChannelError" class="text-app-danger text-sm mt-3">{{ createChannelError }}</div>
           <div class="flex gap-3 mt-5">
             <button
-              class="flex-1 py-2 rounded bg-white/10 hover:bg-white/20 text-gray-200 text-sm transition-colors"
+              class="dlg-btn dlg-btn-ghost flex-1"
               @click="createChannelOpen = false"
             >Cancel</button>
             <button
-              class="flex-1 py-2 rounded bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
+              class="dlg-btn dlg-btn-primary flex-1"
               :disabled="createChannelLoading || !canSubmitCreateChannel"
               @click="submitCreateChannel"
             >{{ createChannelLoading ? 'Creating...' : 'Create' }}</button>
@@ -494,26 +494,26 @@
       </div>
 
       <!-- Rename Channel dialog -->
-      <div v-if="renameChannelOpen" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" @click.self="renameChannelOpen = false">
-        <div class="bg-[#222529] border border-chat-border rounded-xl shadow-2xl w-full max-w-sm p-6">
-          <h3 class="text-lg font-bold text-white mb-4">Rename Channel</h3>
+      <div v-if="renameChannelOpen" class="dlg-overlay z-50" @click.self="renameChannelOpen = false">
+        <div class="dlg-window p-6">
+          <h3 class="dlg-title mb-4">Rename Channel</h3>
           <div class="space-y-3">
-            <label class="block text-sm text-gray-400 mb-1">Name</label>
+            <label class="dlg-label">Name</label>
             <input
               v-model="renameChannelName"
               type="text"
-              class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+              class="dlg-input"
               placeholder="#channel-name"
             />
           </div>
-          <div v-if="renameChannelError" class="text-red-400 text-sm mt-3">{{ renameChannelError }}</div>
+          <div v-if="renameChannelError" class="text-app-danger text-sm mt-3">{{ renameChannelError }}</div>
           <div class="flex gap-3 mt-5">
             <button
-              class="flex-1 py-2 rounded bg-white/10 hover:bg-white/20 text-gray-200 text-sm transition-colors"
+              class="dlg-btn dlg-btn-ghost flex-1"
               @click="renameChannelOpen = false"
             >Cancel</button>
             <button
-              class="flex-1 py-2 rounded bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
+              class="dlg-btn dlg-btn-primary flex-1"
               :disabled="renameChannelLoading || !canSubmitRenameChannel"
               @click="submitRenameChannel"
             >{{ renameChannelLoading ? 'Saving...' : 'Save' }}</button>

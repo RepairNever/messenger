@@ -1,20 +1,23 @@
 <template>
   <div>
     <div
-      class="group flex items-center gap-2 rounded px-2 py-1.5 text-sm transition-colors"
+      class="group relative flex min-h-8 items-center gap-1 rounded-md pr-1.5 text-[15px] transition-colors"
       :class="selectedDocumentId === node.id ? 'bg-sidebar-active text-white' : 'text-sidebar-text hover:bg-sidebar-hover'"
-      :style="{ paddingLeft: `${8 + (level * 14)}px` }"
+      :style="{ paddingLeft: `${8 + level * 16}px` }"
       :data-document-node-id="node.id"
+      @contextmenu.prevent="openMenuFromEvent($event)"
     >
       <button
         v-if="hasChildren"
         type="button"
-        class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-sidebar-textMuted transition-colors hover:bg-sidebar-hover hover:text-sidebar-text"
+        class="flex h-4 w-4 shrink-0 items-center justify-center rounded transition-colors"
+        :class="selectedDocumentId === node.id ? 'text-white/80 hover:text-white' : 'text-sidebar-textMuted hover:text-sidebar-text'"
+        :aria-expanded="!isCollapsed"
         :data-testid="`documents-node-toggle-${node.id}`"
         @click.stop="$emit('toggleCollapse', node.id)"
       >
         <svg
-          class="h-3 w-3 shrink-0 transition-transform"
+          class="h-3.5 w-3.5 shrink-0 transition-transform"
           :class="isCollapsed ? '' : 'rotate-90'"
           fill="currentColor"
           viewBox="0 0 20 20"
@@ -27,83 +30,160 @@
         </svg>
       </button>
       <span v-else class="h-4 w-4 shrink-0" aria-hidden="true" />
+
+      <span
+        class="flex h-4 w-4 shrink-0 items-center justify-center"
+        :class="selectedDocumentId === node.id ? 'text-white/80' : 'text-sidebar-textMuted'"
+        aria-hidden="true"
+      >
+        <svg
+          v-if="hasChildren"
+          class="h-4 w-4"
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M2.75 6.75c0-1.24 1.01-2.25 2.25-2.25h2.59c.4 0 .78.16 1.06.44l.81.81c.28.28.66.44 1.06.44h4.73c1.24 0 2.25 1.01 2.25 2.25v6.06c0 1.24-1.01 2.25-2.25 2.25H5c-1.24 0-2.25-1.01-2.25-2.25V6.75z" />
+        </svg>
+        <svg
+          v-else
+          class="h-4 w-4"
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M11.5 2.75H6.75c-1.24 0-2.25 1.01-2.25 2.25v10c0 1.24 1.01 2.25 2.25 2.25h6.5c1.24 0 2.25-1.01 2.25-2.25V6.75l-4-4z" />
+          <path d="M11.5 2.75V5.5c0 .69.56 1.25 1.25 1.25h2.75" />
+        </svg>
+      </span>
+
+      <input
+        v-if="renaming"
+        ref="renameInputRef"
+        v-model="renameValue"
+        type="text"
+        class="min-w-0 flex-1 select-text rounded border border-accent bg-chat-input px-1.5 py-0.5 text-[15px] text-white outline-none"
+        :data-testid="`documents-node-rename-input-${node.id}`"
+        :aria-label="'Document title'"
+        @keydown.enter.prevent="commitRename"
+        @keydown.esc.prevent="cancelRename"
+        @blur="commitRename"
+        @click.stop
+      >
       <button
+        v-else
         type="button"
         class="min-w-0 flex-1 truncate text-left"
+        :title="node.title"
         :data-testid="`documents-node-${node.id}`"
         @click="openDocumentRow"
       >
         {{ node.title }}
       </button>
-      <button
-        type="button"
-        class="hidden h-5 w-5 shrink-0 items-center justify-center rounded transition disabled:opacity-50 group-hover:flex group-focus-within:flex"
-        :class="node.is_favorite
-          ? 'text-yellow-300 hover:bg-sidebar-hover hover:text-yellow-200'
-          : 'text-sidebar-textMuted hover:bg-sidebar-hover hover:text-yellow-300'"
-        :data-testid="`documents-node-favorite-toggle-${node.id}`"
-        :title="node.is_favorite ? 'Remove from favorites' : 'Add to favorites'"
-        :aria-label="node.is_favorite ? 'Remove from favorites' : 'Add to favorites'"
-        :disabled="favoriteLoading"
-        @click.stop="toggleFavoriteFromRow"
+
+      <span
+        v-if="node.is_favorite && !renaming"
+        class="flex h-5 w-5 shrink-0 items-center justify-center text-yellow-300"
+        :data-testid="`documents-node-favorite-static-${node.id}`"
+        aria-hidden="true"
       >
-        <svg
-          v-if="node.is_favorite"
-          class="h-3.5 w-3.5"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-          aria-hidden="true"
-          :data-testid="`documents-node-favorite-filled-${node.id}`"
-        >
+        <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
           <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.175 3.617a1 1 0 0 0 .95.69h3.804c.969 0 1.371 1.24.588 1.81l-3.078 2.237a1 1 0 0 0-.364 1.118l1.176 3.617c.299.921-.756 1.688-1.54 1.118l-3.077-2.236a1 1 0 0 0-1.176 0l-3.077 2.236c-.784.57-1.839-.197-1.54-1.118l1.176-3.617a1 1 0 0 0-.364-1.118L2.526 9.044c-.783-.57-.38-1.81.588-1.81h3.804a1 1 0 0 0 .95-.69l1.181-3.617z" />
         </svg>
-        <svg
-          v-else
-          class="h-3.5 w-3.5"
-          viewBox="0 0 20 20"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.7"
-          stroke-linejoin="round"
-          aria-hidden="true"
-          :data-testid="`documents-node-favorite-outline-${node.id}`"
+      </span>
+
+      <div
+        v-if="!renaming"
+        class="absolute right-1 top-1/2 z-10 hidden -translate-y-1/2 items-center gap-0.5 rounded-md bg-inherit p-0.5 group-hover:flex group-focus-within:flex"
+      >
+        <button
+          type="button"
+          class="hidden h-5 w-5 shrink-0 items-center justify-center rounded transition disabled:opacity-50 group-hover:flex group-focus-within:flex"
+          :class="node.is_favorite
+            ? 'text-yellow-300 hover:bg-sidebar-hover hover:text-yellow-200'
+            : 'text-sidebar-textMuted hover:bg-sidebar-hover hover:text-yellow-300'"
+          :data-testid="`documents-node-favorite-toggle-${node.id}`"
+          :title="node.is_favorite ? 'Remove from favorites' : 'Add to favorites'"
+          :aria-label="node.is_favorite ? 'Remove from favorites' : 'Add to favorites'"
+          :disabled="favoriteLoading"
+          @click.stop="toggleFavoriteFromRow"
         >
-          <path d="M10 2.75l2.11 4.28 4.72.69-3.41 3.32.8 4.7L10 13.52l-4.22 2.22.8-4.7-3.41-3.32 4.72-.69L10 2.75z" />
-        </svg>
-      </button>
-      <button
-        type="button"
-        class="hidden h-5 w-5 shrink-0 items-center justify-center rounded text-sidebar-textMuted transition-opacity group-hover:flex group-focus-within:flex hover:bg-sidebar-hover hover:text-sidebar-text"
-        :data-testid="`documents-node-add-${node.id}`"
-        title="Add child document"
-        @click.stop="$emit('addChild', node.id)"
-      >
-        +
-      </button>
-      <button
-        ref="menuButtonRef"
-        type="button"
-        class="hidden h-5 w-5 shrink-0 items-center justify-center rounded text-sidebar-textMuted transition-opacity group-hover:flex group-focus-within:flex hover:bg-sidebar-hover hover:text-sidebar-text"
-        :data-testid="`documents-node-menu-${node.id}`"
-        title="Document actions"
-        @click.stop="toggleMenu"
-      >
-        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
-          <circle cx="12" cy="5" r="1.8" />
-          <circle cx="12" cy="12" r="1.8" />
-          <circle cx="12" cy="19" r="1.8" />
-        </svg>
-      </button>
+          <svg
+            v-if="node.is_favorite"
+            class="h-3.5 w-3.5"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            aria-hidden="true"
+            :data-testid="`documents-node-favorite-filled-${node.id}`"
+          >
+            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.175 3.617a1 1 0 0 0 .95.69h3.804c.969 0 1.371 1.24.588 1.81l-3.078 2.237a1 1 0 0 0-.364 1.118l1.176 3.617c.299.921-.756 1.688-1.54 1.118l-3.077-2.236a1 1 0 0 0-1.176 0l-3.077 2.236c-.784.57-1.839-.197-1.54-1.118l1.176-3.617a1 1 0 0 0-.364-1.118L2.526 9.044c-.783-.57-.38-1.81.588-1.81h3.804a1 1 0 0 0 .95-.69l1.181-3.617z" />
+          </svg>
+          <svg
+            v-else
+            class="h-3.5 w-3.5"
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linejoin="round"
+            aria-hidden="true"
+            :data-testid="`documents-node-favorite-outline-${node.id}`"
+          >
+            <path d="M10 2.75l2.11 4.28 4.72.69-3.41 3.32.8 4.7L10 13.52l-4.22 2.22.8-4.7-3.41-3.32 4.72-.69L10 2.75z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="hidden h-5 w-5 shrink-0 items-center justify-center rounded text-sidebar-textMuted transition-colors group-hover:flex group-focus-within:flex hover:bg-sidebar-hover hover:text-sidebar-text"
+          :data-testid="`documents-node-add-${node.id}`"
+          title="Add child document"
+          @click.stop="$emit('addChild', node.id)"
+        >
+          +
+        </button>
+        <button
+          ref="menuButtonRef"
+          type="button"
+          class="hidden h-5 w-5 shrink-0 items-center justify-center rounded text-sidebar-textMuted transition-colors group-hover:flex group-focus-within:flex hover:bg-sidebar-hover hover:text-sidebar-text"
+          :data-testid="`documents-node-menu-${node.id}`"
+          title="Document actions"
+          @click.stop="openMenuFromButton"
+        >
+          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="5" r="1.8" />
+            <circle cx="12" cy="12" r="1.8" />
+            <circle cx="12" cy="19" r="1.8" />
+          </svg>
+        </button>
+      </div>
     </div>
     <p
       v-if="favoriteError"
       class="py-1 pr-2 text-xs text-red-400"
-      :style="{ paddingLeft: `${30 + (level * 14)}px` }"
+      :style="{ paddingLeft: `${32 + level * 16}px` }"
     >
       {{ favoriteError }}
     </p>
+    <p
+      v-if="renameError"
+      class="py-1 pr-2 text-xs text-red-400"
+      :style="{ paddingLeft: `${32 + level * 16}px` }"
+    >
+      {{ renameError }}
+    </p>
 
-    <div v-if="hasChildren && !isCollapsed">
+    <div v-if="hasChildren && !isCollapsed" class="relative">
+      <span
+        aria-hidden="true"
+        class="absolute bottom-0 top-0 w-px bg-app-divider/40"
+        :style="{ left: `${16 + level * 16}px` }"
+      />
       <DocumentsTreeNode
         v-for="child in childNodes"
         :key="child.id"
@@ -120,7 +200,7 @@
   </div>
 
   <Teleport to="body">
-    <div v-if="menuOpen" class="fixed inset-0 z-50" @click="closeMenu">
+    <div v-if="menuOpen" class="fixed inset-0 z-50" @click="closeMenu" @contextmenu.prevent="closeMenu">
       <div
         class="fixed min-w-[180px] rounded-lg border border-chat-border bg-chat-header p-1 shadow-2xl"
         :style="{ top: `${menuPosition.top}px`, left: `${menuPosition.left}px` }"
@@ -128,7 +208,25 @@
       >
         <button
           type="button"
+          class="flex w-full items-center rounded px-3 py-2 text-left text-sm text-sidebar-text transition-colors hover:bg-sidebar-hover hover:text-white"
+          :data-testid="`documents-node-menu-rename-${node.id}`"
+          @click="startRenameFromMenu"
+        >
+          Rename
+        </button>
+        <button
+          type="button"
+          class="flex w-full items-center rounded px-3 py-2 text-left text-sm text-sidebar-text transition-colors hover:bg-sidebar-hover hover:text-white"
+          :data-testid="`documents-node-menu-add-${node.id}`"
+          @click="addChildFromMenu"
+        >
+          Add child document
+        </button>
+        <div class="my-1 border-t border-white/10" />
+        <button
+          type="button"
           class="flex w-full items-center rounded px-3 py-2 text-left text-sm text-red-300 transition-colors hover:bg-red-500/10 hover:text-red-200"
+          :data-testid="`documents-node-menu-delete-${node.id}`"
           @click="openDeleteConfirm"
         >
           Delete
@@ -140,19 +238,19 @@
   <Teleport to="body">
     <div
       v-if="deleteConfirmOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      class="dlg-overlay z-50"
       @click.self="closeDeleteConfirm"
     >
-      <div class="w-full max-w-sm rounded-xl border border-chat-border bg-chat-header p-5 shadow-2xl">
-        <h3 class="text-base font-semibold text-white">Delete document?</h3>
-        <p class="mt-2 text-sm text-gray-300">
+      <div class="dlg-window max-w-sm p-5" role="dialog" aria-modal="true" aria-label="Delete document?">
+        <h3 class="dlg-title">Delete document?</h3>
+        <p class="mt-2 text-sm text-app-secondaryText">
           This will delete "{{ node.title }}" and all nested child documents.
         </p>
-        <p v-if="deleteError" class="mt-3 text-xs text-red-400">{{ deleteError }}</p>
+        <p v-if="deleteError" class="mt-3 text-xs text-app-danger">{{ deleteError }}</p>
         <div class="mt-4 flex justify-end gap-2">
           <button
             type="button"
-            class="rounded border border-chat-border px-3 py-1.5 text-sm text-gray-300 transition-colors hover:text-white"
+            class="dlg-btn dlg-btn-ghost"
             :disabled="deleteLoading"
             @click="closeDeleteConfirm"
           >
@@ -160,7 +258,7 @@
           </button>
           <button
             type="button"
-            class="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-red-500 disabled:opacity-50"
+            class="dlg-btn dlg-btn-danger"
             :disabled="deleteLoading"
             @click="confirmDelete"
           >
@@ -173,7 +271,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { SidebarDocumentNode } from '@/services/http/documentsApi'
 import { useDocumentsStore } from '@/stores/documents'
 import { normalizeDocumentNodes } from '@/utils/documentsUtils'
@@ -197,6 +295,11 @@ const favoriteLoading = ref(false)
 const favoriteError = ref('')
 const menuButtonRef = ref<HTMLButtonElement | null>(null)
 const menuPosition = ref({ top: 0, left: 0 })
+const renaming = ref(false)
+const renameValue = ref('')
+const renameLoading = ref(false)
+const renameError = ref('')
+const renameInputRef = ref<HTMLInputElement | null>(null)
 
 const emit = defineEmits<{
   openDocument: [id: string]
@@ -205,22 +308,48 @@ const emit = defineEmits<{
   documentsDeleted: [ids: string[]]
 }>()
 
+watch(menuOpen, (open) => {
+  if (open) {
+    document.addEventListener('keydown', onMenuKeydown)
+  } else {
+    document.removeEventListener('keydown', onMenuKeydown)
+  }
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onMenuKeydown)
+})
+
+function onMenuKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    closeMenu()
+  }
+}
+
 function openDocumentRow() {
   closeMenu()
   emit('openDocument', props.node.id)
 }
 
-function toggleMenu() {
+function openMenuFromButton() {
   if (menuOpen.value) {
     closeMenu()
     return
   }
   const rect = menuButtonRef.value?.getBoundingClientRect()
   if (rect) {
-    menuPosition.value = {
-      top: rect.bottom + 6,
-      left: Math.max(8, rect.right - 180),
-    }
+    openMenuAt(rect.right - 180, rect.bottom + 6)
+  }
+}
+
+function openMenuFromEvent(event: MouseEvent) {
+  openMenuAt(event.clientX, event.clientY)
+}
+
+function openMenuAt(x: number, y: number) {
+  menuPosition.value = {
+    top: Math.max(8, Math.min(y, window.innerHeight - 220)),
+    left: Math.max(8, Math.min(x, window.innerWidth - 200)),
   }
   menuOpen.value = true
 }
@@ -229,10 +358,51 @@ function closeMenu() {
   menuOpen.value = false
 }
 
-function openDeleteConfirm() {
+function startRenameFromMenu() {
   closeMenu()
-  deleteError.value = ''
-  deleteConfirmOpen.value = true
+  startRename()
+}
+
+function startRename() {
+  renameValue.value = props.node.title
+  renameError.value = ''
+  renaming.value = true
+  void nextTick(() => {
+    renameInputRef.value?.focus()
+    renameInputRef.value?.select()
+  })
+}
+
+function cancelRename() {
+  if (!renaming.value) return
+  renaming.value = false
+  renameValue.value = ''
+  renameError.value = ''
+}
+
+async function commitRename() {
+  if (!renaming.value || renameLoading.value) return
+  const trimmed = renameValue.value.trim()
+  if (!trimmed || trimmed === props.node.title) {
+    cancelRename()
+    return
+  }
+  renameLoading.value = true
+  renameError.value = ''
+  try {
+    await documentsStore.renameDocument(props.node.id, trimmed)
+    renaming.value = false
+    renameValue.value = ''
+  } catch (e) {
+    renameError.value = e instanceof Error ? e.message : 'Failed to rename document'
+  } finally {
+    renameLoading.value = false
+  }
+}
+
+function addChildFromMenu() {
+  closeMenu()
+  emit('addChild', props.node.id)
 }
 
 async function setFavoriteState(isFavorite: boolean): Promise<boolean> {
@@ -255,6 +425,12 @@ async function setFavoriteState(isFavorite: boolean): Promise<boolean> {
 
 async function toggleFavoriteFromRow() {
   await setFavoriteState(!props.node.is_favorite)
+}
+
+function openDeleteConfirm() {
+  closeMenu()
+  deleteError.value = ''
+  deleteConfirmOpen.value = true
 }
 
 function closeDeleteConfirm() {

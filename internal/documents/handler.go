@@ -415,6 +415,9 @@ func (h *Handler) documentAttachmentsRouter(
 func (h *Handler) documentAttachmentUpload(w http.ResponseWriter, r *http.Request, p auth.Principal, documentID uuid.UUID) {
 	maxBytes := int64(h.maxAttachSizeMB) * 1024 * 1024
 	formLimit := maxBytes + 2*1024*1024
+	// Cap the request body before parsing so oversized uploads are rejected
+	// while streaming instead of being spooled to temp files on disk first.
+	r.Body = http.MaxBytesReader(w, r.Body, formLimit)
 	if err := r.ParseMultipartForm(formLimit); err != nil {
 		writeJSON(w, http.StatusBadRequest, errBody("failed to parse multipart form: "+err.Error()))
 		return
@@ -489,6 +492,7 @@ func (h *Handler) documentAttachmentDownload(
 	}
 	defer body.Close()
 
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.Header().Set("Content-Disposition", `attachment; filename="`+sanitiseHeaderValue(fileName)+`"`)

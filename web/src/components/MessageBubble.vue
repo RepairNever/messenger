@@ -1,38 +1,45 @@
 <template>
   <div
-    class="relative flex gap-3 px-2 py-1 rounded group hover:bg-chat-msgHover transition-colors"
+    class="group relative flex gap-2.5 rounded-xl px-2 py-[3px] transition-colors hover:bg-chat-msgHover"
     :class="[
-      showHeader ? 'mt-4' : 'mt-0.5',
-      isActiveThread ? 'border-l-2 border-accent bg-accent/5' : '',
-      message.sendStatus === 'failed' ? 'border-l-2 border-red-500/60' : '',
-      message.sendStatus === 'queued' ? 'border-l-2 border-dashed border-gray-500/40' : '',
+      showHeader ? 'mt-2' : 'mt-0',
+      isOwnMessage ? 'justify-end' : '',
+      isActiveThread ? 'bg-accent/5' : '',
     ]"
   >
     <!-- Active thread indicator -->
     <div
       v-if="isActiveThread"
-      class="absolute left-0 top-0 bottom-0 flex items-start pt-2 pl-1 text-accent text-[10px] font-bold select-none"
+      class="absolute left-0 top-0 bottom-0 flex items-start pt-3 pl-1 text-accent-text select-none"
     >
-      ▶
+      <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 6l6 6-6 6" />
+      </svg>
     </div>
 
-    <!-- Avatar column -->
-    <div class="w-9 shrink-0 pt-0.5" :class="isActiveThread ? 'ml-3' : ''">
+    <!-- Avatar column (incoming only; own messages are right-aligned without one) -->
+    <div v-if="!isOwnMessage" class="w-9 shrink-0 pt-[20px]">
       <UserAvatar
         v-if="showHeader"
         :user-id="message.senderId"
         :display-name="message.senderName"
         :avatar-url="message.senderAvatarUrl"
         :custom-status="null"
-        size="lg"
+        size="msg"
       />
     </div>
 
-    <!-- Content column -->
-    <div class="flex-1 min-w-0">
+    <!-- Stack: header line, bubble, attachments, thread chip, reactions -->
+    <div
+      class="relative flex w-fit min-w-0 max-w-full flex-col"
+      :class="[
+        isOwnMessage ? 'items-end' : 'items-start',
+        isEditing ? 'min-w-[min(100%,560px)]' : '',
+      ]"
+    >
 
-      <!-- Header row: name + timestamp + hover actions -->
-      <div v-if="showHeader" class="flex items-baseline gap-2 mb-0.5">
+      <!-- Header row: name + timestamp + hover actions (first message of a group) -->
+      <div v-if="showHeader && !isOwnMessage" class="mb-1 flex items-baseline gap-2 px-1.5">
         <span
           v-if="senderStatus"
           class="inline-flex shrink-0 self-center text-lg leading-none"
@@ -41,22 +48,22 @@
         >
           {{ senderStatus.emoji }}
         </span>
-        <span class="font-bold text-white">{{ message.senderName }}</span>
-        <span class="text-xs text-gray-500">{{ formattedTime }}</span>
+        <span class="font-bold text-[13px] text-app-secondaryText">{{ message.senderName }}</span>
+        <span class="shrink-0 whitespace-nowrap text-[11px] text-app-muted" :title="fullTimestamp">{{ formattedTime }}</span>
         <span
           v-if="message.editedAt"
           data-testid="message-edited-marker"
-          class="text-[11px] text-gray-500"
+          class="text-[11px] text-app-muted"
         >(edited)</span>
         <!-- Send status indicators -->
-        <span v-if="message.sendStatus === 'sending'" class="inline-flex items-center gap-1 text-xs text-gray-500">
+        <span v-if="message.sendStatus === 'sending'" class="inline-flex items-center gap-1 text-xs text-app-muted">
           <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
           </svg>
           sending
         </span>
-        <span v-else-if="message.sendStatus === 'queued'" class="inline-flex items-center gap-1 text-xs text-gray-500" title="Message queued — will send when connection is restored">
+        <span v-else-if="message.sendStatus === 'queued'" class="inline-flex items-center gap-1 text-xs text-app-muted" title="Message queued — will send when connection is restored">
           <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <circle cx="12" cy="12" r="10"/>
             <polyline points="12,6 12,12 16,14"/>
@@ -73,12 +80,12 @@
         </span>
 
         <!-- Hover actions (right-aligned) -->
-        <div class="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div class="ml-auto flex shrink-0 items-center gap-0.5 rounded-md bg-inherit p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             v-if="canSaveMessage"
             data-testid="save-message-button"
-            class="h-7 w-7 rounded flex items-center justify-center transition-colors"
-            :class="message.isSaved ? 'text-cyan-300 hover:text-cyan-200 hover:bg-white/10' : 'text-gray-400 hover:text-gray-200 hover:bg-white/10'"
+            class="h-7 w-7 rounded-full flex items-center justify-center transition-colors"
+            :class="message.isSaved ? 'text-cyan-300 hover:text-cyan-200 hover:bg-app-hover' : 'text-app-muted hover:text-app-text hover:bg-app-hover'"
             :title="message.isSaved ? 'Unsave message' : 'Save message'"
             @click.stop="toggleSaved"
           >
@@ -91,7 +98,7 @@
             v-if="!hasReactions && showFirstReactionAction"
             data-testid="first-reaction-button"
             ref="pickerToggleButton"
-            class="h-7 w-7 rounded flex items-center justify-center text-gray-400 hover:text-gray-200 hover:bg-white/10 transition-colors"
+            class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
             title="Add reaction"
             @click.stop="togglePickerButton"
           >
@@ -102,7 +109,7 @@
           <button
             v-if="!threadReplyCount && showThreadAction && !isThreadReply"
             data-testid="new-thread-button"
-            class="h-7 w-7 rounded flex items-center justify-center text-gray-400 hover:text-gray-200 hover:bg-white/10 transition-colors"
+            class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
             title="Reply in thread"
             @click="$emit('openThread', message)"
           >
@@ -114,7 +121,7 @@
           <!-- ⋯ More actions -->
           <button
             ref="contextMenuTrigger"
-            class="h-7 w-7 rounded flex items-center justify-center text-gray-400 hover:text-gray-200 hover:bg-white/10 transition-colors"
+            class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
             title="More actions"
             @click.stop="toggleContextMenu"
           >
@@ -125,13 +132,96 @@
         </div>
       </div>
 
-      <!-- Hover actions for grouped messages (no header row) -->
-      <div v-if="!showHeader" class="absolute right-2 top-0.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+      <!-- Header row for own messages: right-aligned pack -->
+      <div v-else-if="showHeader && isOwnMessage" class="mb-1 flex items-baseline justify-end gap-2 px-1.5">
+        <!-- Hover actions (left of the name when hovering) -->
+        <div class="flex shrink-0 items-center gap-0.5 rounded-md bg-inherit p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            v-if="canSaveMessage"
+            data-testid="save-message-button"
+            class="h-7 w-7 rounded-full flex items-center justify-center transition-colors"
+            :class="message.isSaved ? 'text-cyan-300 hover:text-cyan-200 hover:bg-app-hover' : 'text-app-muted hover:text-app-text hover:bg-app-hover'"
+            :title="message.isSaved ? 'Unsave message' : 'Save message'"
+            @click.stop="toggleSaved"
+          >
+            <svg class="w-4 h-4" :fill="message.isSaved ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M19 21 12 17 5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+            </svg>
+          </button>
+          <button
+            v-if="!hasReactions && showFirstReactionAction"
+            data-testid="first-reaction-button"
+            ref="pickerToggleButton"
+            class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
+            title="Add reaction"
+            @click.stop="togglePickerButton"
+          >
+            <span class="text-sm leading-none font-semibold">😎</span>
+          </button>
+          <button
+            v-if="!threadReplyCount && showThreadAction && !isThreadReply"
+            data-testid="new-thread-button"
+            class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
+            title="Reply in thread"
+            @click="$emit('openThread', message)"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+          </button>
+          <button
+            ref="contextMenuTrigger"
+            class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
+            title="More actions"
+            @click.stop="toggleContextMenu"
+          >
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+              <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
+            </svg>
+          </button>
+        </div>
+        <span class="font-bold text-[13px] text-app-secondaryText">You</span>
+        <span class="shrink-0 whitespace-nowrap text-[11px] text-app-muted" :title="fullTimestamp">{{ formattedTime }}</span>
+        <span
+          v-if="message.editedAt"
+          data-testid="message-edited-marker"
+          class="text-[11px] text-app-muted"
+        >(edited)</span>
+        <span v-if="message.sendStatus === 'sending'" class="inline-flex items-center gap-1 text-xs text-app-muted">
+          <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+          sending
+        </span>
+        <span v-else-if="message.sendStatus === 'queued'" class="inline-flex items-center gap-1 text-xs text-app-muted" title="Message queued — will send when connection is restored">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12,6 12,12 16,14"/>
+          </svg>
+          queued
+        </span>
+        <span v-else-if="message.sendStatus === 'failed'" class="inline-flex items-center gap-1 text-xs text-red-400">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          Not sent
+        </span>
+      </div>
+
+      <!-- Hover actions for grouped messages (no header row); hug the bubble side -->
+      <div
+        v-if="!showHeader"
+        class="absolute top-0 z-30 flex items-center gap-0.5 rounded-md bg-inherit p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+        :class="isOwnMessage ? 'right-full mr-1' : 'left-full ml-1'"
+      >
         <button
           v-if="canSaveMessage"
           data-testid="save-message-button"
-          class="h-7 w-7 rounded flex items-center justify-center transition-colors"
-          :class="message.isSaved ? 'text-cyan-300 hover:text-cyan-200 hover:bg-white/10' : 'text-gray-400 hover:text-gray-200 hover:bg-white/10'"
+          class="h-7 w-7 rounded-full flex items-center justify-center transition-colors"
+          :class="message.isSaved ? 'text-cyan-300 hover:text-cyan-200 hover:bg-app-hover' : 'text-app-muted hover:text-app-text hover:bg-app-hover'"
           :title="message.isSaved ? 'Unsave message' : 'Save message'"
           @click.stop="toggleSaved"
         >
@@ -143,7 +233,7 @@
           v-if="!hasReactions && showFirstReactionAction"
           data-testid="first-reaction-button"
           ref="pickerToggleButton"
-          class="h-7 w-7 rounded flex items-center justify-center text-gray-400 hover:text-gray-200 hover:bg-white/10 transition-colors"
+          class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
           title="Add reaction"
           @click.stop="togglePickerButton"
         >
@@ -152,7 +242,7 @@
         <button
           v-if="!threadReplyCount && showThreadAction && !isThreadReply"
           data-testid="new-thread-button"
-          class="h-7 w-7 rounded flex items-center justify-center text-gray-400 hover:text-gray-200 hover:bg-white/10 transition-colors"
+          class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
           title="Reply in thread"
           @click="$emit('openThread', message)"
         >
@@ -163,7 +253,7 @@
         <!-- ⋯ More actions -->
         <button
           ref="contextMenuTrigger"
-          class="h-7 w-7 rounded flex items-center justify-center text-gray-400 hover:text-gray-200 hover:bg-white/10 transition-colors"
+          class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
           title="More actions"
           @click.stop="toggleContextMenu"
         >
@@ -175,14 +265,14 @@
 
       <!-- Send status for grouped messages (no header row) -->
       <div v-if="!showHeader && message.sendStatus" class="mb-0.5 flex items-center gap-1">
-        <span v-if="message.sendStatus === 'sending'" class="inline-flex items-center gap-1 text-xs text-gray-500">
+        <span v-if="message.sendStatus === 'sending'" class="inline-flex items-center gap-1 text-xs text-app-muted">
           <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
           </svg>
           sending
         </span>
-        <span v-else-if="message.sendStatus === 'queued'" class="inline-flex items-center gap-1 text-xs text-gray-500" title="Message queued — will send when connection is restored">
+        <span v-else-if="message.sendStatus === 'queued'" class="inline-flex items-center gap-1 text-xs text-app-muted" title="Message queued — will send when connection is restored">
           <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <circle cx="12" cy="12" r="10"/>
             <polyline points="12,6 12,12 16,14"/>
@@ -200,13 +290,13 @@
       </div>
 
       <!-- Message body -->
-      <div v-if="isEditing" class="mt-1">
+      <div v-if="isEditing" class="w-full">
         <RichTextComposer
           ref="editComposer"
           v-model="editBody"
           v-model:entities="editEntities"
           data-testid="message-edit-textarea"
-          class="rounded border border-white/10 bg-chat-input px-2.5 py-2"
+          class="rounded-2xl border border-chat-border bg-chat-input px-2.5 py-2"
           :conversation-id="message.channelId"
           :enable-message-entities="true"
           :disabled="editSaving"
@@ -216,8 +306,9 @@
           @submit="saveEdit"
         />
         <div class="mt-1.5 flex items-center justify-between gap-2">
-          <span class="text-[11px] text-gray-500">Enter saves in plain text · Shift+Enter newline · Ctrl/Cmd+Enter save anywhere · Esc cancel</span>
-          <span v-if="editError" class="text-xs text-red-300">{{ editError }}</span>
+          <span class="text-[11px] text-app-muted">Enter saves in plain text · Shift+Enter newline · Ctrl/Cmd+Enter save anywhere · Esc cancel</span>
+          <span v-if="editBodyTooLong" class="text-xs text-amber-300">Message is too long</span>
+          <span v-else-if="editError" class="text-xs text-red-300">{{ editError }}</span>
         </div>
       </div>
 
@@ -225,7 +316,7 @@
         <div
           v-if="message.forwardedFrom"
           data-testid="message-forwarded-banner"
-          class="mb-1 inline-flex max-w-full items-center gap-1 rounded border border-chat-border bg-chat-input/70 px-2 py-0.5 text-[11px] text-app-muted"
+          class="mb-1 inline-flex max-w-full items-center gap-1 rounded-full border border-chat-border bg-chat-input/70 px-2 py-0.5 text-[11px] text-app-muted"
           :title="formatForwardedMessageLabel(message.forwardedFrom)"
         >
           <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -236,15 +327,20 @@
         </div>
         <div
           v-if="message.body"
-          class="markdown-body"
-          :class="bodyTextClass"
-          v-html="renderedMessageHtml"
-          @click="onMarkdownClick"
-        ></div>
+          class="w-fit max-w-full rounded-[14px] border px-2.5 py-1.5 shadow-sm"
+          :class="bubbleSideClasses"
+        >
+          <div
+            class="markdown-body break-words text-[15px] leading-[1.47]"
+            :class="bodyTextClass"
+            v-html="renderedMessageHtml"
+            @click="onMarkdownClick"
+          ></div>
+        </div>
         <p
           v-if="!showHeader && message.editedAt"
           data-testid="message-edited-marker"
-          class="mt-0.5 text-[11px] text-gray-500"
+          class="mt-0.5 px-1.5 text-[11px] text-app-muted"
         >(edited)</p>
       </template>
 
@@ -252,11 +348,11 @@
       <div v-if="message.sendStatus === 'failed'" class="mt-1 flex items-center gap-2">
         <span v-if="message.failReason" class="text-xs text-red-400/80">{{ message.failReason }}</span>
         <button
-          class="text-xs text-accent hover:text-accent-hover hover:underline transition-colors"
+          class="text-xs text-accent-text hover:text-accent-text hover:underline transition-colors"
           @click="handleRetry"
         >Retry</button>
         <button
-          class="text-xs text-gray-500 hover:text-gray-400 hover:underline transition-colors"
+          class="text-xs text-app-muted hover:text-app-muted hover:underline transition-colors"
           @click="handleDiscard"
         >Delete</button>
       </div>
@@ -265,7 +361,7 @@
         <div
           v-for="attachment in messageAttachments"
           :key="attachment.id"
-          :class="isInlinePreviewAttachment(attachment) ? '' : 'rounded-md border border-chat-border bg-chat-input/70 p-2'"
+          :class="isInlinePreviewAttachment(attachment) ? '' : 'rounded-[18px] border border-chat-border bg-chat-input/70 p-2.5'"
         >
           <div
             v-if="isImageAttachment(attachment)"
@@ -275,7 +371,7 @@
           >
             <button
               data-testid="message-image-thumbnail"
-              class="block max-h-[min(38vh,220px)] max-w-[min(72vw,280px)] overflow-hidden rounded-lg bg-chat-input/60 shadow-sm transition-colors hover:bg-chat-input/80 sm:max-w-[min(42vw,360px)] cursor-pointer"
+              class="block max-h-[min(38vh,220px)] max-w-[min(72vw,280px)] overflow-hidden rounded-[18px] border border-chat-border bg-chat-input/60 shadow-sm transition-colors hover:bg-chat-input/80 sm:max-w-[min(42vw,360px)] cursor-pointer"
               @click="openMediaPreview(attachment)"
             >
               <img
@@ -285,7 +381,7 @@
                 :alt="attachment.fileName"
                 class="max-h-[min(38vh,220px)] w-full object-contain"
               >
-              <div v-else class="flex h-24 items-center justify-center text-xs text-gray-500">
+              <div v-else class="flex h-24 items-center justify-center text-xs text-app-muted">
                 {{ imagePreviewState(attachment) === 'failed' ? 'Preview unavailable' : 'Loading image...' }}
               </div>
             </button>
@@ -311,7 +407,7 @@
             <button
               v-if="attachmentUrl(attachment)"
               data-testid="message-video-thumbnail"
-              class="relative block max-h-[min(42vh,260px)] max-w-[min(76vw,420px)] overflow-hidden rounded-lg border border-chat-border/70 bg-black/50 shadow-sm transition-colors hover:border-white/20 sm:max-w-[min(46vw,520px)] cursor-pointer"
+              class="relative block max-h-[min(42vh,260px)] max-w-[min(76vw,420px)] overflow-hidden rounded-[18px] border border-chat-border/70 bg-black/50 shadow-sm transition-colors hover:border-white/20 sm:max-w-[min(46vw,520px)] cursor-pointer"
               @click="openMediaPreview(attachment)"
             >
               <video
@@ -336,7 +432,7 @@
               v-else
               type="button"
               data-testid="message-video-load"
-              class="rounded-md border border-chat-border bg-chat-input/70 p-2 text-[11px] text-gray-400 transition-colors hover:bg-chat-input hover:text-gray-200"
+              class="rounded-md border border-chat-border bg-chat-input/70 p-2 text-[11px] text-app-muted transition-colors hover:bg-chat-input hover:text-app-text"
               @click="openMediaPreview(attachment)"
             >
               {{ loadingAttachmentIds.has(attachment.id) ? 'Loading video...' : 'Load video preview' }}
@@ -356,9 +452,9 @@
 
           <template v-else>
             <div class="mb-1 flex items-center justify-between gap-2">
-              <p class="truncate text-xs text-gray-300">{{ attachment.fileName }}</p>
+              <p class="truncate text-xs text-app-secondaryText">{{ attachment.fileName }}</p>
               <button
-                class="rounded p-1 text-gray-400 hover:bg-white/10 hover:text-white"
+                class="rounded p-1 text-app-muted hover:bg-app-hover hover:text-app-text"
                 title="Download"
                 @click="downloadAttachment(attachment)"
               >
@@ -386,41 +482,31 @@
                 v-else
                 type="button"
                 data-testid="message-audio-load"
-                class="text-left text-[11px] text-gray-400 transition-colors hover:text-gray-200 hover:underline"
+                class="text-left text-[11px] text-app-muted transition-colors hover:text-app-text hover:underline"
                 @click="loadAudioPreview(attachment)"
               >
                 {{ loadingAttachmentIds.has(attachment.id) ? 'Loading audio...' : 'Load audio' }}
               </button>
             </div>
 
-            <p v-else class="text-[11px] text-gray-500">
+            <p v-else class="text-[11px] text-app-muted">
               {{ formatFileSize(attachment.fileSize) }}
             </p>
           </template>
         </div>
       </div>
 
-      <!-- Thread indicator (Section 4) -->
-      <button
-        v-if="threadReplyCount > 0 && showThreadAction && !isThreadReply"
-        data-testid="thread-action-button"
-        class="mt-1.5 flex items-center gap-2 text-[13px] text-accent hover:text-accent-hover hover:underline transition-colors"
-        @click="$emit('openThread', message)"
+      <!-- Reactions row — pills sit just below the bubble -->
+      <div
+        v-if="hasReactions"
+        class="mt-1 mx-1 flex flex-wrap items-center gap-1"
+        :class="isOwnMessage ? 'justify-end' : ''"
       >
-        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-        </svg>
-        <span class="font-medium">{{ threadReplyCount }} {{ threadReplyCount === 1 ? 'reply' : 'replies' }}</span>
-        <span v-if="lastReplyAtLabel" class="text-gray-500 font-normal">Last reply {{ lastReplyAtLabel }}</span>
-      </button>
-
-      <!-- Reactions row (Section 3) -->
-      <div v-if="hasReactions" class="mt-1.5 flex flex-wrap items-center gap-1">
         <button
           v-for="r in message.reactions"
           :key="r.emoji"
           data-testid="reaction-chip"
-          class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-sm border transition-colors"
+          class="inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs shadow-sm transition-colors"
           :class="reactionChipClass(r.emoji)"
           :title="`${r.count} ${r.count === 1 ? 'reaction' : 'reactions'}`"
           :disabled="chat.isReactionOpPending(message.channelId, message.id, r.emoji)"
@@ -428,15 +514,15 @@
           @mouseleave="onReactionChipMouseLeave(r.emoji)"
           @click="toggleReaction(r.emoji)"
         >
-          <span class="text-lg leading-none">{{ r.emoji }}</span>
-          <span class="font-medium">{{ r.count }}</span>
+          <span class="text-[13px] leading-none">{{ r.emoji }}</span>
+          <span class="font-semibold">{{ r.count }}</span>
         </button>
 
         <!-- Add reaction button (visible when reactions exist) -->
         <div class="relative inline-flex">
           <button
             ref="pickerToggleButton"
-            class="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs border border-chat-border bg-transparent text-app-secondaryText hover:text-app-text hover:bg-chat-msgHover transition-colors opacity-0 group-hover:opacity-100"
+            class="inline-flex h-6 w-6 items-center justify-center rounded-full border border-chat-border bg-chat-input text-xs text-app-secondaryText shadow-sm hover:text-app-text hover:bg-chat-msgHover transition-colors opacity-0 group-hover:opacity-100"
             title="Add reaction"
             @click.stop="togglePickerButton"
           >
@@ -444,6 +530,20 @@
           </button>
         </div>
       </div>
+
+      <!-- Thread indicator -->
+      <button
+        v-if="threadReplyCount > 0 && showThreadAction && !isThreadReply"
+        data-testid="thread-action-button"
+        class="mx-1 mt-1 mb-0.5 inline-flex max-w-full items-center gap-2 rounded-full border border-chat-border bg-chat-input px-2.5 py-1 text-xs shadow-sm transition-colors hover:border-accent/50 hover:bg-accent/10"
+        @click="$emit('openThread', message)"
+      >
+        <svg class="w-3.5 h-3.5 shrink-0 text-accent-text" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span class="whitespace-nowrap font-medium text-accent-text">{{ threadReplyCount }} {{ threadReplyCount === 1 ? 'reply' : 'replies' }}</span>
+        <span v-if="lastReplyAtLabel" class="whitespace-nowrap font-normal text-app-muted">Last reply {{ lastReplyAtLabel }}</span>
+      </button>
 
     </div>
   </div>
@@ -487,7 +587,7 @@
       v-if="reactionPopupVisible"
       ref="reactionUsersPopupRoot"
       data-testid="reaction-users-popup"
-      class="fixed z-[10000] overflow-hidden rounded-md border border-white/10 bg-sidebar-bg shadow-xl"
+      class="fixed z-[10000] overflow-hidden rounded-lg border border-chat-border bg-chat-header shadow-2xl"
       :style="reactionUsersPopupStyle"
       @mouseenter="onReactionPopupMouseEnter"
       @mouseleave="onReactionPopupMouseLeave"
@@ -496,7 +596,7 @@
         <div
           v-if="reactionUsersLoading"
           data-testid="reaction-users-loading"
-          class="px-2 py-1.5 text-xs text-gray-400"
+          class="px-2 py-1.5 text-xs text-app-muted"
         >
           Loading users...
         </div>
@@ -509,7 +609,7 @@
         </div>
         <div
           v-else-if="activeReactionUsers.length === 0"
-          class="px-2 py-1.5 text-xs text-gray-400"
+          class="px-2 py-1.5 text-xs text-app-muted"
         >
           No reactions yet
         </div>
@@ -517,7 +617,7 @@
           <div
             v-for="user in activeReactionUsers"
             :key="`${user.user_id}-${activeReactionEmoji}`"
-            class="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-white/5"
+            class="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-app-hover"
           >
             <UserAvatar
               :user-id="user.user_id"
@@ -525,7 +625,7 @@
               :avatar-url="user.avatar_url"
               size="xs"
             />
-            <span class="truncate text-xs text-gray-200">{{ user.display_name }}</span>
+            <span class="truncate text-xs text-app-secondaryText">{{ user.display_name }}</span>
           </div>
         </div>
       </div>
@@ -536,14 +636,14 @@
   <Teleport to="body">
     <div
       v-if="showContextMenu"
-      class="fixed z-[9999] min-w-[160px] rounded border border-white/10 bg-sidebar-bg shadow-xl py-1"
+      class="fixed z-[9999] min-w-44 rounded-lg border border-chat-border bg-chat-header p-1 shadow-2xl"
       :style="contextMenuStyle"
       @click.stop
     >
       <button
         v-if="canModifyMessage"
         data-testid="message-menu-edit"
-        class="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-white/10 transition-colors"
+        class="w-full rounded px-3 py-2 text-left text-sm text-app-secondaryText hover:bg-app-hover hover:text-app-text transition-colors"
         :disabled="isDeleting"
         @click="startEdit"
       >
@@ -552,7 +652,7 @@
       <button
         v-if="canDeleteMessage"
         data-testid="message-menu-delete"
-        class="w-full text-left px-3 py-1.5 text-sm text-red-300 hover:bg-red-500/20 transition-colors"
+        class="w-full rounded px-3 py-2 text-left text-sm text-red-300 transition-colors hover:bg-red-500/10 hover:text-red-200"
         :disabled="isDeleting"
         @click="deleteCurrentMessage"
       >
@@ -561,14 +661,14 @@
       <button
         v-if="canForwardMessage"
         data-testid="message-menu-forward"
-        class="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-white/10 transition-colors"
+        class="w-full rounded px-3 py-2 text-left text-sm text-app-secondaryText hover:bg-app-hover hover:text-app-text transition-colors"
         :disabled="isDeleting"
         @click="openForwardDialog"
       >
         Forward message
       </button>
       <button
-        class="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-white/10 transition-colors"
+        class="w-full rounded px-3 py-2 text-left text-sm text-app-secondaryText hover:bg-app-hover hover:text-app-text transition-colors"
         :disabled="isDeleting"
         @click="copyMessage"
       >
@@ -653,6 +753,7 @@ import ForwardMessageDialog from './ForwardMessageDialog.vue'
 import { activeEmojiPickerId, createEmojiPickerInstanceId } from '@/stores/emojiPicker'
 import { renderMessageBodyWithEntities } from '@/utils/renderMessageEntities'
 import { formatForwardedMessageLabel } from '@/utils/forwardedMessages'
+import { isMessageBodyWithinLimit } from '@/utils/messageLimits'
 import RichTextComposer from './RichTextComposer.vue'
 import {
   formatUserCustomStatusTitle,
@@ -806,13 +907,10 @@ function debugReaction(label: string, payload?: unknown) {
 
 const formattedTime = computed(() => {
   const d = new Date(props.message.createdAt)
-  return d.toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 })
+
+const fullTimestamp = computed(() => new Date(props.message.createdAt).toLocaleString())
 
 const senderStatus = computed(() => {
   const status = chat.resolveUserCustomStatus(props.message.senderId)
@@ -864,8 +962,10 @@ const canForwardMessage = computed(() => isServerConfirmed.value && !isEncrypted
 const canSaveEdit = computed(() =>
   !editSaving.value
   && !editPendingTaskUrlPaste.value
-  && (editBody.value.trim().length > 0 || messageAttachments.value.length > 0),
+  && (editBody.value.trim().length > 0 || messageAttachments.value.length > 0)
+  && isMessageBodyWithinLimit(editBody.value),
 )
+const editBodyTooLong = computed(() => !isMessageBodyWithinLimit(editBody.value))
 
 const lastReplyAtLabel = computed(() => {
   const summary = chat.threadSummaries[props.message.id]
@@ -886,12 +986,31 @@ function relativeTime(isoString: string): string {
 }
 
 const bodyTextClass = computed(() => {
-  switch (props.message.sendStatus) {
-    case 'sending': return 'text-gray-300 opacity-90'
-    case 'queued': return 'text-gray-300 opacity-80'
-    case 'failed': return 'text-gray-300 opacity-75'
-    default: return props.message.pending ? 'text-gray-400' : 'text-gray-300'
+  // Own bubbles sit on the accent surface — text inherits it rather than the
+  // secondary color used on incoming bubbles.
+  if (isOwnMessage.value) {
+    switch (props.message.sendStatus) {
+      case 'sending': return 'opacity-90'
+      case 'queued': return 'opacity-80'
+      case 'failed': return 'opacity-75'
+      default: return ''
+    }
   }
+  switch (props.message.sendStatus) {
+    case 'sending': return 'text-app-secondaryText opacity-90'
+    case 'queued': return 'text-app-secondaryText opacity-80'
+    case 'failed': return 'text-app-secondaryText opacity-75'
+    default: return props.message.pending ? 'text-app-muted' : 'text-app-secondaryText'
+  }
+})
+
+const bubbleSideClasses = computed(() => {
+  const side = isOwnMessage.value
+    ? 'bubble-out rounded-tr-[8px] border-transparent bg-accent text-app-onAccent'
+    : 'rounded-tl-[8px] border-chat-border bg-app-tertiary text-app-secondaryText'
+  if (props.message.sendStatus === 'failed') return `${side} ring-1 ring-red-500/50`
+  if (props.isActiveThread) return `${side} ring-1 ring-accent/60`
+  return side
 })
 
 const renderedMessageHtml = computed(() => {
@@ -2103,11 +2222,32 @@ function reactionChipClass(emoji: string): string {
   const pending = chat.isReactionOpPending(props.message.channelId, props.message.id, emoji)
   if (mine) {
     return pending
-      ? 'border-accent/40 bg-accent/20 text-app-text opacity-70'
-      : 'border-accent/60 bg-accent/25 text-app-text'
+      ? 'border-accent/50 bg-accent/15 text-accent-text opacity-70'
+      : 'border-accent/60 bg-accent/15 text-accent-text'
   }
   return pending
     ? 'border-chat-border bg-chat-input text-app-secondaryText opacity-70'
     : 'border-chat-border bg-chat-input hover:bg-chat-msgHover text-app-secondaryText'
 }
 </script>
+
+<style>
+/*
+ * Outgoing bubbles sit on the accent surface; markdown content inside them must
+ * follow it instead of the theme's secondary text colors. Not scoped: v-html
+ * content carries no data-v attributes.
+ */
+.bubble-out .markdown-body { color: rgb(var(--color-text-on-accent)); }
+.bubble-out .markdown-body :is(h1, h2, h3, h4, h5, h6) { color: inherit; }
+.bubble-out .markdown-body a,
+.bubble-out .markdown-body button[data-message-entity-kind],
+.bubble-out .markdown-body span[data-mention-text] { color: inherit; }
+.bubble-out .markdown-body a { text-decoration-color: rgb(var(--color-text-on-accent) / 0.45); }
+.bubble-out .markdown-body code {
+  background: rgb(var(--color-text-on-accent) / 0.12);
+  border-color: rgb(var(--color-text-on-accent) / 0.2);
+  color: inherit;
+}
+.bubble-out .markdown-body li::marker { color: rgb(var(--color-text-on-accent) / 0.7); }
+.bubble-out .markdown-body ol > li::marker { color: inherit; }
+</style>

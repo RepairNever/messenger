@@ -46,7 +46,7 @@
           </button>
           <span v-else class="w-4 shrink-0"/>
 
-          <span class="font-mono text-accent font-semibold w-20 shrink-0">{{ tpl.prefix }}</span>
+          <span class="font-mono text-accent-text font-semibold w-20 shrink-0">{{ tpl.prefix }}</span>
           <span class="text-gray-500 text-xs w-12 shrink-0">{{ tpl.sort_order }}</span>
 
           <span
@@ -82,43 +82,43 @@
     <Teleport to="body">
       <div
         v-if="dialogOpen"
-        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+        class="dlg-overlay z-50"
         @click.self="dialogOpen = false"
       >
-        <div class="bg-[#222529] border border-chat-border rounded-xl shadow-2xl w-full max-w-sm p-6">
-          <h3 class="text-lg font-bold text-white mb-4">
+        <div class="dlg-window p-6" role="dialog" aria-modal="true">
+          <h3 class="dlg-title mb-4">
             {{ dialogMode === 'create' ? 'Create Template' : 'Edit Template' }}
           </h3>
           <div class="space-y-3">
             <div>
-              <label class="block text-sm text-gray-400 mb-1">
-                Prefix <span class="text-gray-500">(uppercase A–Z only)</span>
+              <label class="dlg-label">
+                Prefix <span class="text-app-muted">(uppercase A–Z only)</span>
               </label>
               <input
                 v-model="form.prefix"
                 type="text"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm font-mono outline-none focus:border-accent uppercase"
+                class="dlg-input font-mono uppercase"
                 placeholder="DEV"
                 @input="form.prefix = (form.prefix as string).toUpperCase().replace(/[^A-Z]/g, '')"
               />
             </div>
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Sort Order</label>
+              <label class="dlg-label">Sort Order</label>
               <input
                 v-model.number="form.sort_order"
                 type="number"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
               />
             </div>
           </div>
-          <div v-if="dialogError" class="text-red-400 text-sm mt-3">{{ dialogError }}</div>
+          <div v-if="dialogError" class="text-app-danger text-sm mt-3">{{ dialogError }}</div>
           <div class="flex gap-3 mt-5">
             <button
-              class="flex-1 py-2 rounded bg-white/10 hover:bg-white/20 text-gray-200 text-sm transition-colors"
+              class="dlg-btn dlg-btn-ghost flex-1"
               @click="dialogOpen = false"
             >Cancel</button>
             <button
-              class="flex-1 py-2 rounded bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
+              class="dlg-btn dlg-btn-primary flex-1"
               :disabled="dialogLoading"
               @click="submitDialog"
             >{{ dialogLoading ? 'Saving...' : 'Save' }}</button>

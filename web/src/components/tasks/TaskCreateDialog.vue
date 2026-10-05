@@ -2,12 +2,12 @@
   <Teleport to="body">
     <div
       v-if="tasksStore.createDialogOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      class="dlg-overlay z-50"
     >
-      <div class="w-[80vw] max-w-[80vw] rounded-xl border border-chat-border bg-chat-header shadow-2xl flex flex-col max-h-[90vh]">
+      <div class="dlg-window max-w-[80vw]" role="dialog" aria-modal="true" aria-label="New task">
         <!-- Header -->
-        <div class="flex items-center justify-between px-6 py-4 border-b border-chat-border shrink-0">
-          <h2 class="text-base font-semibold text-app-text">New task</h2>
+        <div class="dlg-head flex items-center justify-between border-b border-app-divider px-6 py-4 shrink-0">
+          <h2 class="dlg-title text-base">New task</h2>
           <button
             class="text-app-muted hover:text-app-text transition-colors"
             aria-label="Close"
@@ -128,13 +128,13 @@
         </div>
 
         <!-- Footer -->
-        <div class="flex justify-end gap-3 px-6 py-4 border-t border-chat-border shrink-0">
-          <div v-if="submitError" class="flex-1 text-red-400 text-sm self-center">
+        <div class="flex justify-end gap-3 border-t border-app-divider px-6 py-4 shrink-0">
+          <div v-if="submitError" class="flex-1 text-app-danger text-sm self-center">
             {{ submitError }}
           </div>
           <button
             type="button"
-            class="px-4 py-2 rounded text-sm text-app-secondaryText hover:text-app-text hover:bg-chat-msgHover transition-colors"
+            class="dlg-btn dlg-btn-ghost"
             :disabled="submitting"
             @click="cancel"
           >
@@ -142,7 +142,7 @@
           </button>
           <button
             type="button"
-            class="px-4 py-2 rounded bg-accent hover:bg-accent-hover text-app-onAccent text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="dlg-btn dlg-btn-primary"
             :disabled="!canSubmit || submitting"
             @click="submit"
           >
@@ -411,9 +411,9 @@ watch(
 
 <style scoped>
 .form-label {
-  @apply block text-sm text-app-muted mb-1;
+  @apply block text-xs text-app-muted mb-1;
 }
 .form-input {
-  @apply w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-app-text placeholder-app-muted text-sm outline-none focus:border-accent transition-colors;
+  @apply w-full bg-app-input border border-app-divider rounded-[10px] px-3 py-2 text-[13px] text-app-text placeholder-app-muted outline-none focus:border-accent/55 transition-colors;
 }
 </style>

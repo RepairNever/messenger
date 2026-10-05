@@ -9,6 +9,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -482,6 +483,15 @@ func (s *Service) SendMessage(ctx context.Context, p SendMessageParams) (SendMes
 		contentMode = MessageContentPlaintext
 	}
 	isEncryptedContent := contentMode == MessageContentDMPairwiseSignal
+	if !IsValidClientMsgID(p.ClientMsgID) {
+		return SendMessageResult{}, ErrInvalidClientMsgID
+	}
+	if utf8.RuneCountInString(p.Body) > MaxMessageBodyRunes {
+		return SendMessageResult{}, ErrMessageTooLarge
+	}
+	if len(p.Entities) > MaxMessageEntities {
+		return SendMessageResult{}, fmt.Errorf("%w: too many entities (max %d)", ErrInvalidMessageEntity, MaxMessageEntities)
+	}
 	if len(p.AttachmentIDs) > maxMessageAttachments {
 		return SendMessageResult{}, fmt.Errorf("%w: too many attachments (max %d)", ErrInvalidAttachment, maxMessageAttachments)
 	}
@@ -1162,6 +1172,12 @@ func (s *Service) userNoticeLabelTx(ctx context.Context, tx pgx.Tx, userID uuid.
 // The mutation emits message_updated and recalculates unread counters for members.
 func (s *Service) EditMessage(ctx context.Context, p EditMessageParams) (EditMessageResult, error) {
 	p.Body = strings.TrimSpace(p.Body)
+	if utf8.RuneCountInString(p.Body) > MaxMessageBodyRunes {
+		return EditMessageResult{}, ErrMessageTooLarge
+	}
+	if len(p.Entities) > MaxMessageEntities {
+		return EditMessageResult{}, fmt.Errorf("%w: too many entities (max %d)", ErrInvalidMessageEntity, MaxMessageEntities)
+	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

@@ -24,15 +24,19 @@ vi.mock('@/platform/runtime', () => ({
   isTauriRuntime: platformMocks.isTauriRuntime,
 }))
 
+const soundMocks = vi.hoisted(() => ({
+  playMessagePing: vi.fn().mockResolvedValue(undefined),
+  playCallMemberJoined: vi.fn().mockResolvedValue(undefined),
+  playCallMemberLeft: vi.fn().mockResolvedValue(undefined),
+  playCallHandRaised: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('@/services/sound', () => ({
-  useNotificationSoundEngine: () => ({
-    playIncomingMessage: vi.fn(),
-    startCallInviteRing: vi.fn().mockResolvedValue(undefined),
-    stopCallInviteRing: vi.fn(),
-  }),
+  useNotificationSoundEngine: () => soundMocks,
 }))
 
 beforeEach(() => {
+  for (const mock of Object.values(soundMocks)) mock.mockClear()
   platformMocks.getPlatformOrNull.mockReset()
   platformMocks.getPlatformOrNull.mockReturnValue(null)
   platformMocks.getRuntimePlatformType.mockReset()
@@ -176,6 +180,87 @@ describe('callStore raised hands', () => {
       { userId: 'user-b', position: 1 },
       { userId: 'user-c', position: 2 },
     ])
+  })
+})
+
+describe('callStore hand-raise sound', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function connectActiveCall(): { callStore: ReturnType<typeof useCallStore>, chatStore: ReturnType<typeof useChatStore> } {
+    const callStore = useCallStore()
+    const chatStore = useChatStore()
+    chatStore.activeCalls = [{
+      id: 'call-1',
+      conversationId: 'channel-1',
+      status: '1',
+      participantCount: 2,
+      raisedHands: [],
+    }]
+    callStore.activeCallId = 'call-1'
+    callStore.activeConversationId = 'channel-1'
+    callStore.connected = true
+    return { callStore, chatStore }
+  }
+
+  it('plays the sound once when a participant raises a hand', async () => {
+    const { callStore, chatStore } = connectActiveCall()
+
+    chatStore.applyCallRaisedHandsSnapshot('call-1', 'channel-1', [
+      { userId: 'user-b', position: 1 },
+    ] as never)
+    await nextTick()
+
+    expect(soundMocks.playCallHandRaised).toHaveBeenCalledTimes(1)
+    expect(callStore.raisedHands).toEqual([{ userId: 'user-b', position: 1 }])
+  })
+
+  it('stays silent for identical snapshots and lowered hands', async () => {
+    const { chatStore } = connectActiveCall()
+
+    chatStore.applyCallRaisedHandsSnapshot('call-1', 'channel-1', [
+      { userId: 'user-b', position: 1 },
+    ] as never)
+    await nextTick()
+    expect(soundMocks.playCallHandRaised).toHaveBeenCalledTimes(1)
+
+    chatStore.applyCallRaisedHandsSnapshot('call-1', 'channel-1', [
+      { userId: 'user-b', position: 1 },
+    ] as never)
+    await nextTick()
+    expect(soundMocks.playCallHandRaised).toHaveBeenCalledTimes(1)
+
+    chatStore.applyCallRaisedHandsSnapshot('call-1', 'channel-1', [] as never)
+    await nextTick()
+    expect(soundMocks.playCallHandRaised).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays silent for the pre-connect join snapshot, then plays for new raises', async () => {
+    const callStore = useCallStore()
+    const chatStore = useChatStore()
+    chatStore.activeCalls = [{
+      id: 'call-1',
+      conversationId: 'channel-1',
+      status: '1',
+      participantCount: 2,
+      raisedHands: [],
+    }]
+    callStore.activeCallId = 'call-1'
+    callStore.activeConversationId = 'channel-1'
+
+    chatStore.applyCallRaisedHandsSnapshot('call-1', 'channel-1', [
+      { userId: 'user-b', position: 1 },
+    ] as never)
+    await nextTick()
+    expect(soundMocks.playCallHandRaised).not.toHaveBeenCalled()
+
+    callStore.connected = true
+    chatStore.applyCallRaisedHandsSnapshot('call-1', 'channel-1', [
+      { userId: 'user-c', position: 2 },
+    ] as never)
+    await nextTick()
+    expect(soundMocks.playCallHandRaised).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -1,0 +1,315 @@
+/*
+ * Shared dialog design language (derived from the call-window A2 modal).
+ * Theme-adaptive: every color resolves from the semantic CSS variables that
+ * the four app themes override, so dialogs restyle per theme automatically.
+ *
+ * Classes live in `@layer components` so per-dialog Tailwind utilities
+ * (max-w-*, z-*, spacing) always win over these defaults.
+ */
+@layer components {
+    .dlg-overlay {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(3px);
+    }
+
+    .dlg-window {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        max-width: 430px;
+        max-height: min(86vh, 680px);
+        overflow: hidden;
+        border: 1px solid rgb(var(--color-divider));
+        border-radius: 16px;
+        background: rgb(var(--color-bg-tertiary));
+        color: rgb(var(--color-text-secondary));
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+    }
+
+    .dlg-head {
+        padding: 16px 16px 12px;
+    }
+
+    .dlg-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: rgb(var(--color-text-primary));
+    }
+
+    .dlg-sub {
+        margin-top: 2px;
+        font-size: 12.5px;
+        color: rgb(var(--color-text-muted));
+    }
+
+    .dlg-note {
+        padding: 8px 16px;
+        border-top: 1px solid rgb(var(--color-divider));
+        border-bottom: 1px solid rgb(var(--color-divider));
+        font-size: 12.5px;
+    }
+
+    .dlg-note-danger {
+        background: rgb(var(--color-status-red) / 0.1);
+        color: rgb(var(--color-status-red));
+    }
+
+    .dlg-note-ok {
+        background: rgb(var(--color-status-green) / 0.08);
+        color: rgb(var(--color-status-green));
+    }
+
+    .dlg-search {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 38px;
+        margin: 4px 16px 10px;
+        padding: 0 10px;
+        border: 1px solid rgb(var(--color-divider));
+        border-radius: 10px;
+        background: rgb(var(--color-input));
+    }
+
+    .dlg-search:focus-within {
+        border-color: rgb(var(--color-accent) / 0.55);
+    }
+
+    .dlg-search-input {
+        flex: 1;
+        min-width: 0;
+        border: none;
+        outline: none;
+        background: transparent;
+        font-size: 13px;
+        color: rgb(var(--color-text-primary));
+    }
+
+    .dlg-search-input::placeholder {
+        color: rgb(var(--color-text-muted));
+    }
+
+    .dlg-list {
+        flex: 1 1 auto;
+        min-height: 120px;
+        overflow-y: auto;
+        padding: 0 8px 8px;
+    }
+
+    .dlg-empty {
+        padding: 28px 12px;
+        font-size: 12.5px;
+        color: rgb(var(--color-text-muted));
+        text-align: center;
+    }
+
+    .dlg-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 8px;
+        border-radius: 10px;
+        cursor: pointer;
+        text-align: left;
+    }
+
+    .dlg-row:hover {
+        background: rgb(var(--color-surface-hover) / 0.6);
+    }
+
+    .dlg-row-disabled {
+        opacity: 0.55;
+        cursor: default;
+    }
+
+    .dlg-row-disabled:hover {
+        background: transparent;
+    }
+
+    .dlg-row-name {
+        font-size: 13.5px;
+        font-weight: 500;
+        line-height: 1.25;
+        color: rgb(var(--color-text-primary));
+    }
+
+    .dlg-row-sub {
+        font-size: 12px;
+        color: rgb(var(--color-text-muted));
+    }
+
+    .dlg-check {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 19px;
+        height: 19px;
+        border: 1px solid rgb(var(--color-divider));
+        border-radius: 6px;
+        background: transparent;
+        color: rgb(var(--color-text-on-accent));
+        flex-shrink: 0;
+    }
+
+    .dlg-check-on {
+        border-color: rgb(var(--color-accent));
+        background: rgb(var(--color-accent));
+    }
+
+    .dlg-badge-live {
+        display: inline-flex;
+        align-items: center;
+        height: 22px;
+        padding: 0 8px;
+        border: 1px solid rgb(var(--color-status-green) / 0.28);
+        border-radius: 999px;
+        background: rgb(var(--color-status-green) / 0.1);
+        color: rgb(var(--color-status-green));
+        font-size: 10.5px;
+        font-weight: 600;
+        flex-shrink: 0;
+    }
+
+    .dlg-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 16px;
+        border-top: 1px solid rgb(var(--color-divider));
+        background: rgb(var(--color-bg-secondary));
+    }
+
+    .dlg-foot-end {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 12px;
+        padding: 12px 16px;
+        border-top: 1px solid rgb(var(--color-divider));
+        background: rgb(var(--color-bg-secondary));
+    }
+
+    .dlg-count {
+        font-size: 12px;
+        color: rgb(var(--color-text-muted));
+    }
+
+    .dlg-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        height: 32px;
+        padding: 0 14px;
+        border-radius: 9px;
+        font-size: 12.5px;
+        font-weight: 500;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .dlg-btn-ghost {
+        color: rgb(var(--color-text-secondary));
+    }
+
+    .dlg-btn-ghost:hover {
+        background: rgb(var(--color-surface-hover));
+        color: rgb(var(--color-text-primary));
+    }
+
+    .dlg-btn-primary {
+        background: rgb(var(--color-accent));
+        color: rgb(var(--color-text-on-accent));
+        font-weight: 600;
+    }
+
+    .dlg-btn-primary:hover {
+        background: rgb(var(--color-accent-hover));
+    }
+
+    .dlg-btn-primary:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
+
+    .dlg-btn-danger {
+        background: rgb(var(--color-status-red));
+        color: #ffffff;
+        font-weight: 600;
+    }
+
+    .dlg-btn-danger:hover {
+        background: rgb(var(--color-status-red) / 0.85);
+    }
+
+    /* Form fields (settings, admin CRUD, task/dayoff forms) */
+    .dlg-field {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .dlg-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: rgb(var(--color-text-muted));
+    }
+
+    .dlg-input {
+        height: 38px;
+        padding: 0 12px;
+        border: 1px solid rgb(var(--color-divider));
+        border-radius: 10px;
+        background: rgb(var(--color-input));
+        font-size: 13px;
+        color: rgb(var(--color-text-primary));
+        outline: none;
+        width: 100%;
+    }
+
+    .dlg-input::placeholder {
+        color: rgb(var(--color-text-muted));
+    }
+
+    .dlg-input:focus {
+        border-color: rgb(var(--color-accent) / 0.55);
+    }
+
+    .dlg-input:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    textarea.dlg-input {
+        height: auto;
+        min-height: 76px;
+        padding: 9px 12px;
+        resize: vertical;
+        line-height: 1.5;
+    }
+
+    select.dlg-input {
+        cursor: pointer;
+    }
+
+    .dlg-kbd {
+        display: inline-flex;
+        align-items: center;
+        height: 18px;
+        padding: 0 5px;
+        border: 1px solid rgb(var(--color-divider));
+        border-radius: 5px;
+        background: rgb(var(--color-input));
+        font-family: inherit;
+        font-size: 10.5px;
+        color: rgb(var(--color-text-muted));
+    }
+}

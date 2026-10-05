@@ -11,14 +11,14 @@
     >
       <!-- Product decision: header close hides active workspace but keeps pin in strip. -->
       <aside class="flex h-full min-h-0 w-full flex-col border-l border-chat-border bg-chat-header">
-        <header class="flex items-center gap-3 border-b border-chat-border px-4 py-3">
+        <header class="flex h-14 shrink-0 items-center gap-3 border-b border-chat-border px-4">
           <div class="min-w-0 flex-1">
             <div class="truncate text-sm font-semibold text-white">
               {{ headerTitle }}
             </div>
           </div>
           <button
-            class="flex h-7 w-7 items-center justify-center rounded text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
+            class="flex h-7 w-7 items-center justify-center rounded text-app-muted transition-colors hover:bg-app-hover hover:text-app-text"
             aria-label="Close pinned panel"
             @click="pinned.deactivate()"
           >
@@ -75,7 +75,7 @@
 
         <span
           class="flex-1 overflow-hidden text-ellipsis py-1 text-center text-[12px] font-semibold tracking-wide"
-          :class="item.id === pinned.activeId ? 'font-bold text-white' : 'text-gray-200'"
+          :class="item.id === pinned.activeId ? 'font-bold text-app-text' : 'text-app-secondaryText'"
           style="writing-mode: vertical-rl;"
         >
           {{ item.title }}
@@ -83,7 +83,7 @@
 
         <button
           type="button"
-          class="flex h-5 w-5 items-center justify-center rounded text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+          class="flex h-5 w-5 items-center justify-center rounded text-app-secondaryText transition-colors hover:bg-app-hover hover:text-app-text"
           :aria-label="`Unpin ${item.title}`"
           @click.stop="pinned.unpin(item.id)"
         >
@@ -122,6 +122,6 @@ function openPinnedThread(message: Message) {
 function cardClass(item: PinnedDialogue) {
   const base = pinned.itemTypeMeta(item.kind)
   if (item.id === pinned.activeId) return `${base.activeClass} shadow-lg`
-  return `${base.accentClass} border-white/10 hover:bg-white/10 hover:text-white`
+  return `${base.accentClass} border-chat-border hover:bg-app-hover hover:text-app-text`
 }
 </script>

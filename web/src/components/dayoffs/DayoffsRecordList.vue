@@ -11,7 +11,7 @@
         <button
           v-if="canCreateForEmployee"
           type="button"
-          class="rounded-md border border-accent/60 px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent hover:text-app-onAccent focus:outline-none focus:ring-2 focus:ring-accent"
+          class="rounded-md border border-accent/60 px-3 py-1.5 text-xs font-medium text-accent-text transition-colors hover:bg-accent hover:text-app-onAccent focus:outline-none focus:ring-2 focus:ring-accent"
           data-testid="dayoffs-add-selected"
           @click="$emit('create')"
         >

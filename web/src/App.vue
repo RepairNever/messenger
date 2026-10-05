@@ -12,7 +12,7 @@
       aria-busy="true"
     >
       <div class="flex flex-col items-center gap-3 rounded-xl border border-chat-border bg-chat-header/95 px-6 py-5 text-center shadow-2xl backdrop-blur">
-        <svg class="h-7 w-7 animate-spin text-accent" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <svg class="h-7 w-7 animate-spin text-accent-text" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <circle cx="12" cy="12" r="9" class="opacity-30" stroke="currentColor" stroke-width="3" />
           <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
         </svg>
@@ -26,41 +26,43 @@
   <Teleport to="body">
     <div
       v-if="authStore.needChangePassword"
-      class="fixed inset-0 bg-black/70 flex items-center justify-center z-[9999] p-4"
+      class="dlg-overlay z-[9999]"
     >
-      <div class="bg-chat-input border border-chat-border rounded-xl shadow-2xl w-full max-w-sm p-6">
-        <h3 class="text-lg font-bold text-app-text mb-1">Change your password</h3>
-        <p class="text-sm text-app-muted mb-4">
-          You must set a new password before continuing.
-        </p>
-        <div class="space-y-3">
-          <div>
-            <label class="block text-sm text-app-muted mb-1">New password</label>
+      <div class="dlg-window max-w-sm" role="dialog" aria-modal="true" aria-label="Change your password">
+        <div class="dlg-head">
+          <h3 class="dlg-title">Change your password</h3>
+          <p class="dlg-sub">
+            You must set a new password before continuing.
+          </p>
+        </div>
+        <div class="space-y-3 px-4 pb-4">
+          <div class="dlg-field">
+            <label class="dlg-label">New password</label>
             <input
               v-model="newPassword"
               type="password"
               autocomplete="new-password"
-              class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-app-text text-sm outline-none focus:border-accent"
+              class="dlg-input"
               placeholder="••••••••"
               @keyup.enter="submitChangePassword"
             />
           </div>
-          <div>
-            <label class="block text-sm text-app-muted mb-1">Confirm password</label>
+          <div class="dlg-field">
+            <label class="dlg-label">Confirm password</label>
             <input
               v-model="confirmPassword"
               type="password"
               autocomplete="new-password"
-              class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-app-text text-sm outline-none focus:border-accent"
+              class="dlg-input"
               placeholder="••••••••"
               @keyup.enter="submitChangePassword"
             />
           </div>
         </div>
-        <div v-if="changeError" class="text-red-400 text-sm mt-3">{{ changeError }}</div>
-        <div class="mt-5">
+        <div v-if="changeError" class="dlg-note dlg-note-danger">{{ changeError }}</div>
+        <div class="dlg-foot-end">
           <button
-            class="w-full py-2 rounded bg-accent hover:bg-accent-hover text-app-onAccent text-sm font-medium transition-colors disabled:opacity-50"
+            class="dlg-btn dlg-btn-primary w-full"
             :disabled="changeLoading"
             @click="submitChangePassword"
           >

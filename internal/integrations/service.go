@@ -32,6 +32,22 @@ type Service struct {
 }
 
 type integrationTaskResponseDTO struct {
+	PublicID       string                            `json:"public_id"`
+	Title          string                            `json:"title"`
+	Description    *string                           `json:"description"`
+	Status         integrationTaskStatusDTO          `json:"status"`
+	Fields         []integrationTaskFieldResponseDTO `json:"fields"`
+	Subtasks       []integrationTaskSubtaskDTO       `json:"subtasks"`
+	ParentPublicID *string                           `json:"parent_public_id,omitempty"`
+}
+
+type integrationTaskSubtaskDTO struct {
+	PublicID string `json:"public_id"`
+	Title    string `json:"title"`
+}
+
+// Enum lookups retain their original response shape without task hierarchy data.
+type integrationTaskLookupResponseDTO struct {
 	PublicID    string                            `json:"public_id"`
 	Title       string                            `json:"title"`
 	Description *string                           `json:"description"`
@@ -150,13 +166,13 @@ func (s *Service) GetTask(ctx context.Context, publicID string) (integrationTask
 	return s.mapIntegrationTask(ctx, taskRow, fieldsByTemplateID, statusesByID)
 }
 
-func (s *Service) FindTasksByEnumValue(ctx context.Context, enumCode, enumValue string) ([]integrationTaskResponseDTO, error) {
+func (s *Service) FindTasksByEnumValue(ctx context.Context, enumCode, enumValue string) ([]integrationTaskLookupResponseDTO, error) {
 	taskRows, err := s.tasks.FindTasksByEnumValue(ctx, enumCode, enumValue, enumLookupResultLimit)
 	if err != nil {
 		return nil, err
 	}
 
-	resp := make([]integrationTaskResponseDTO, 0, len(taskRows))
+	resp := make([]integrationTaskLookupResponseDTO, 0, len(taskRows))
 	fieldsByTemplateID := make(map[uuid.UUID][]tasks.FieldRow)
 	statusesByID, err := s.loadIntegrationStatuses(ctx)
 	if err != nil {
@@ -167,7 +183,13 @@ func (s *Service) FindTasksByEnumValue(ctx context.Context, enumCode, enumValue 
 		if err != nil {
 			return nil, err
 		}
-		resp = append(resp, item)
+		resp = append(resp, integrationTaskLookupResponseDTO{
+			PublicID:    item.PublicID,
+			Title:       item.Title,
+			Description: item.Description,
+			Status:      item.Status,
+			Fields:      item.Fields,
+		})
 	}
 	return resp, nil
 }
@@ -243,11 +265,19 @@ func mapIntegrationTaskResponse(
 	}
 
 	resp := integrationTaskResponseDTO{
-		PublicID:    taskRow.PublicID,
-		Title:       taskRow.Title,
-		Description: taskRow.Description,
-		Status:      status,
-		Fields:      make([]integrationTaskFieldResponseDTO, 0, len(fields)),
+		PublicID:       taskRow.PublicID,
+		Title:          taskRow.Title,
+		Description:    taskRow.Description,
+		Status:         status,
+		Fields:         make([]integrationTaskFieldResponseDTO, 0, len(fields)),
+		Subtasks:       make([]integrationTaskSubtaskDTO, 0, len(taskRow.Subtasks)),
+		ParentPublicID: taskRow.ParentPublicID,
+	}
+	for _, subtask := range taskRow.Subtasks {
+		resp.Subtasks = append(resp.Subtasks, integrationTaskSubtaskDTO{
+			PublicID: subtask.PublicID,
+			Title:    subtask.Title,
+		})
 	}
 	for _, field := range fields {
 		value := valuesByFieldID[field.ID]

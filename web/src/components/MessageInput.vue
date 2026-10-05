@@ -1,6 +1,6 @@
 <template>
   <div class="shrink-0 px-4 pb-4 pt-2">
-    <div v-if="attachments.length > 0" class="mb-2 rounded-lg border border-chat-border bg-chat-input/70 p-2">
+    <div v-if="attachments.length > 0" class="mb-2 rounded-2xl border border-chat-border bg-chat-input/70 p-2.5">
       <p class="mb-1 text-[11px] text-app-muted">Attachments ({{ attachments.length }}/{{ MAX_ATTACHMENTS }})</p>
       <ul class="space-y-1">
         <li
@@ -27,8 +27,8 @@
     </div>
 
     <div
-      class="flex flex-col gap-2 rounded-lg border px-3 py-2 transition-colors"
-      :class="isDragOver ? 'border-accent bg-chat-input/90' : 'border-chat-border bg-chat-input'"
+      class="flex items-end gap-1 rounded-[24px] border bg-chat-input px-2 py-2 transition-colors focus-within:border-accent/50"
+      :class="isDragOver ? 'border-accent' : 'border-chat-border'"
     >
       <input
         ref="fileInputEl"
@@ -43,6 +43,7 @@
         v-model="text"
         v-model:entities="entities"
         data-testid="composer-editor"
+        class="min-w-0 self-center px-2"
         :placeholder="placeholder || `Message #${channelName}`"
         :disabled="disabled"
         :focus-token="focusToken"
@@ -57,39 +58,43 @@
         @resize="handleComposerResize"
       />
 
-      <div data-testid="composer-controls-row" class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <button
-            data-testid="composer-attach-button"
-            class="shrink-0 text-app-muted transition-colors hover:text-app-text disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="disabled || encrypted || uploading || !conversationId || attachments.length >= MAX_ATTACHMENTS"
-            :title="attachButtonTitle"
-            @click="openFilePicker"
-          >
-            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path d="M12 5v14M5 12h14"/>
-            </svg>
-          </button>
+      <div data-testid="composer-controls-row" class="flex shrink-0 items-center gap-0.5 pb-0.5">
+        <button
+          data-testid="composer-attach-button"
+          class="grid h-8 w-8 place-items-center rounded-full text-app-muted transition-colors hover:bg-app-hover hover:text-app-text disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="disabled || encrypted || uploading || !conversationId || attachments.length >= MAX_ATTACHMENTS"
+          :title="attachButtonTitle"
+          @click="openFilePicker"
+        >
+          <svg class="h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+            <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </button>
 
-          <button
-            ref="pickerToggleButton"
-            data-testid="composer-emoji-button"
-            class="shrink-0 text-app-muted transition-colors hover:text-app-text disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="disabled"
-            title="Add emoji"
-            @click.stop="toggleEmojiPicker"
-          >
-            <span class="text-lg leading-none">🙂</span>
-          </button>
-        </div>
+        <button
+          ref="pickerToggleButton"
+          data-testid="composer-emoji-button"
+          class="grid h-8 w-8 place-items-center rounded-full text-app-muted transition-colors hover:bg-app-hover hover:text-app-text disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="disabled"
+          title="Add emoji"
+          @click.stop="toggleEmojiPicker"
+        >
+          <svg class="h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M8.5 14.5s1.2 1.8 3.5 1.8 3.5-1.8 3.5-1.8" />
+            <line x1="9" y1="9.5" x2="9.01" y2="9.5" />
+            <line x1="15" y1="9.5" x2="15.01" y2="9.5" />
+          </svg>
+        </button>
 
         <button
           data-testid="composer-send-button"
-          class="shrink-0 rounded p-1.5 transition-colors"
+          class="grid h-9 w-9 place-items-center rounded-full transition-colors"
           :class="canSend
-            ? 'bg-accent hover:bg-accent-hover text-app-onAccent'
+            ? 'bg-accent text-app-onAccent shadow-[0_0_14px_rgb(var(--color-accent)/0.35)] hover:bg-accent-hover'
             : 'text-app-muted cursor-not-allowed opacity-60'"
           :disabled="!canSend"
+          title="Send"
           @click="submit"
         >
           <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
@@ -133,10 +138,12 @@
       </div>
     </Teleport>
 
-    <p class="mt-1 flex items-center justify-between gap-2 pl-1 text-xs text-app-muted">
+    <p class="mt-1.5 flex items-center justify-between gap-4 px-3 text-[11px] text-app-muted">
       <span class="truncate text-app-muted">{{ typingLabel || '' }}</span>
       <span class="whitespace-nowrap">
-        <kbd class="font-mono">Enter</kbd> sends from a plain paragraph · <kbd class="font-mono">Shift+Enter</kbd> newline · <kbd class="font-mono">Ctrl/Cmd+Enter</kbd> send anywhere
+        <kbd class="rounded border border-chat-border bg-app-tertiary px-1 py-px text-[10.5px]">Enter</kbd> sends from a plain paragraph ·
+        <kbd class="rounded border border-chat-border bg-app-tertiary px-1 py-px text-[10.5px]">Shift+Enter</kbd> newline ·
+        <kbd class="rounded border border-chat-border bg-app-tertiary px-1 py-px text-[10.5px]">Ctrl/Cmd+Enter</kbd> send anywhere
       </span>
     </p>
 
@@ -156,6 +163,9 @@
     </div>
     <p v-else-if="attachmentWarning" class="mt-1 pl-1 text-[11px] text-amber-300">{{ attachmentWarning }}</p>
     <p v-else-if="attachmentError" class="mt-1 pl-1 text-[11px] text-red-400">{{ attachmentError }}</p>
+    <p v-else-if="bodyLimitExceeded" class="mt-1 pl-1 text-[11px] text-amber-300">
+      Message is too long: {{ bodyRuneCount.toLocaleString() }} / {{ MAX_MESSAGE_BODY_RUNES.toLocaleString() }} characters
+    </p>
   </div>
 </template>
 
@@ -170,6 +180,7 @@ import {
 } from '@/services/storage/chatDraftStorage'
 import { useComposerEmojiPicker } from '@/composables/useComposerEmojiPicker'
 import { useColorTheme } from '@/composables/useColorTheme'
+import { MAX_MESSAGE_BODY_RUNES, isMessageBodyWithinLimit, messageBodyRuneCount } from '@/utils/messageLimits'
 import type { MessageEntity } from '@/stores/chat'
 import RichTextComposer from './RichTextComposer.vue'
 
@@ -254,10 +265,14 @@ const attachmentWarning = computed(() => {
   return ''
 })
 
+const bodyRuneCount = computed(() => messageBodyRuneCount(text.value))
+const bodyLimitExceeded = computed(() => !isMessageBodyWithinLimit(text.value))
+
 const canSend = computed(() => {
   if (props.disabled || uploading.value || pendingTaskUrlPaste.value) return false
   if (!text.value.trim() && attachments.value.length === 0) return false
   if (attachments.value.length > 0 && props.online === false) return false
+  if (bodyLimitExceeded.value) return false
   return true
 })
 

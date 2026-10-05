@@ -2,18 +2,18 @@
   <Teleport to="body">
     <div
       v-if="open && record"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-app-tertiary/80 p-4 backdrop-blur-sm"
+      class="dlg-overlay z-50"
       @click.self="close"
       @keydown.esc="close"
     >
       <section
-        class="w-full max-w-sm rounded-xl border border-chat-border bg-chat-header p-5 shadow-2xl"
+        class="dlg-window max-w-sm p-5"
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="dayoff-delete-heading"
         aria-describedby="dayoff-delete-description"
       >
-        <h2 id="dayoff-delete-heading" class="text-base font-semibold text-app-text">Delete dayoff?</h2>
+        <h2 id="dayoff-delete-heading" class="dlg-title">Delete dayoff?</h2>
         <p id="dayoff-delete-description" class="mt-2 text-sm text-app-secondaryText">
           {{ dayoffTypeLabel(record.type) }} from {{ formatDateRange(record) }} will be permanently removed.
         </p>
@@ -21,7 +21,7 @@
         <div class="mt-5 flex justify-end gap-2">
           <button
             type="button"
-            class="rounded-md px-3 py-2 text-sm text-app-secondaryText transition-colors hover:bg-chat-msgHover hover:text-app-text disabled:opacity-50"
+            class="dlg-btn dlg-btn-ghost"
             :disabled="saving"
             autofocus
             @click="close"
@@ -30,7 +30,7 @@
           </button>
           <button
             type="button"
-            class="rounded-md bg-app-danger px-3 py-2 text-sm font-medium text-app-onAccent transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            class="dlg-btn dlg-btn-danger"
             data-testid="dayoffs-delete-confirm"
             :disabled="saving"
             @click="$emit('confirm')"

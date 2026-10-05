@@ -220,4 +220,13 @@ var (
 		},
 		[]string{"reason"},
 	)
+
+	WsRateLimitedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "ws_rate_limited_total",
+			Help:      "Total WS envelopes rejected by inbound protection, by scope (connection|user|oversized).",
+		},
+		[]string{"scope"},
+	)
 )

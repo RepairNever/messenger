@@ -13,6 +13,7 @@ const documentsStoreMock = reactive({
   deleteDocument: vi.fn(),
   favoriteDocument: vi.fn(async () => {}),
   unfavoriteDocument: vi.fn(async () => {}),
+  renameDocument: vi.fn(async (_id: string, _title: string) => ({})),
 })
 
 const storageMocks = vi.hoisted(() => ({
@@ -457,8 +458,171 @@ describe('DocumentsSidebar', () => {
     const teamspaceAdd = wrapper.get('[data-testid="documents-teamspace-add-teamspace-1"]')
     expect(teamspaceAdd.classes()).toEqual(expect.arrayContaining([
       'hidden',
-      'group-hover:block',
-      'group-focus-within:block',
+      'group-hover:flex',
+      'group-focus-within:flex',
     ]))
+  })
+
+  it('renames a document inline from the row menu and commits on Enter', async () => {
+    documentsStoreMock.sidebarTeamspaces = [
+      {
+        id: 'teamspace-1',
+        name: 'Alpha',
+        documents: [
+          {
+            id: 'doc-1',
+            teamspace_id: 'teamspace-1',
+            parent_document_id: null,
+            title: 'Root',
+            is_favorite: false,
+            children: [],
+          },
+        ],
+      },
+    ]
+
+    const wrapper = mount(DocumentsSidebar, {
+      props: {
+        selectedTeamspaceId: null,
+        selectedDocumentId: null,
+        searchQuery: '',
+      },
+      global: {
+        stubs: {
+          Teleport: true,
+        },
+      },
+    })
+
+    await wrapper.get('[data-testid="documents-node-menu-doc-1"]').trigger('click')
+    await wrapper.get('[data-testid="documents-node-menu-rename-doc-1"]').trigger('click')
+
+    const renameInput = wrapper.get('[data-testid="documents-node-rename-input-doc-1"]')
+    expect((renameInput.element as HTMLInputElement).value).toBe('Root')
+
+    await renameInput.setValue('Renamed root')
+    await renameInput.trigger('keydown', { key: 'Enter' })
+    await Promise.resolve()
+
+    expect(documentsStoreMock.renameDocument).toHaveBeenCalledWith('doc-1', 'Renamed root')
+    expect(wrapper.find('[data-testid="documents-node-rename-input-doc-1"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="documents-node-doc-1"]').text()).toBe('Root')
+  })
+
+  it('cancels inline rename on Escape without calling the store', async () => {
+    documentsStoreMock.sidebarTeamspaces = [
+      {
+        id: 'teamspace-1',
+        name: 'Alpha',
+        documents: [
+          {
+            id: 'doc-1',
+            teamspace_id: 'teamspace-1',
+            parent_document_id: null,
+            title: 'Root',
+            is_favorite: false,
+            children: [],
+          },
+        ],
+      },
+    ]
+
+    const wrapper = mount(DocumentsSidebar, {
+      props: {
+        selectedTeamspaceId: null,
+        selectedDocumentId: null,
+        searchQuery: '',
+      },
+      global: {
+        stubs: {
+          Teleport: true,
+        },
+      },
+    })
+
+    await wrapper.get('[data-testid="documents-node-menu-doc-1"]').trigger('click')
+    await wrapper.get('[data-testid="documents-node-menu-rename-doc-1"]').trigger('click')
+
+    const renameInput = wrapper.get('[data-testid="documents-node-rename-input-doc-1"]')
+    await renameInput.setValue('Discarded title')
+    await renameInput.trigger('keydown', { key: 'Escape' })
+    await Promise.resolve()
+
+    expect(documentsStoreMock.renameDocument).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="documents-node-rename-input-doc-1"]').exists()).toBe(false)
+  })
+
+  it('opens the row menu on right-click with rename, add-child and delete actions', async () => {
+    documentsStoreMock.sidebarTeamspaces = [
+      {
+        id: 'teamspace-1',
+        name: 'Alpha',
+        documents: [
+          {
+            id: 'doc-1',
+            teamspace_id: 'teamspace-1',
+            parent_document_id: null,
+            title: 'Root',
+            is_favorite: false,
+            children: [],
+          },
+        ],
+      },
+    ]
+
+    const wrapper = mount(DocumentsSidebar, {
+      props: {
+        selectedTeamspaceId: null,
+        selectedDocumentId: null,
+        searchQuery: '',
+      },
+      global: {
+        stubs: {
+          Teleport: true,
+        },
+      },
+    })
+
+    await wrapper.get('[data-testid="documents-node-doc-1"]').trigger('contextmenu')
+    await Promise.resolve()
+
+    expect(wrapper.get('[data-testid="documents-node-menu-rename-doc-1"]').text()).toBe('Rename')
+    expect(wrapper.get('[data-testid="documents-node-menu-add-doc-1"]').text()).toBe('Add child document')
+    expect(wrapper.get('[data-testid="documents-node-menu-delete-doc-1"]').text()).toBe('Delete')
+  })
+
+  it('shows the favorited star on the row without hover', () => {
+    documentsStoreMock.sidebarTeamspaces = [
+      {
+        id: 'teamspace-1',
+        name: 'Alpha',
+        documents: [
+          {
+            id: 'doc-1',
+            teamspace_id: 'teamspace-1',
+            parent_document_id: null,
+            title: 'Root',
+            is_favorite: true,
+            children: [],
+          },
+        ],
+      },
+    ]
+
+    const wrapper = mount(DocumentsSidebar, {
+      props: {
+        selectedTeamspaceId: null,
+        selectedDocumentId: null,
+        searchQuery: '',
+      },
+      global: {
+        stubs: {
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.find('[data-testid="documents-node-favorite-static-doc-1"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="documents-node-favorite-filled-doc-1"]').exists()).toBe(true)
   })
 })

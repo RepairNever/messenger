@@ -400,16 +400,14 @@ describe('MessageBubble reactions', () => {
     expect(addReactionButtons[0].text()).toContain('+')
   })
 
-  it('shows message header timestamp with date and time', () => {
+  it('shows message header timestamp as time of day', () => {
     const createdAt = '2026-03-06T13:05:00Z'
     const msg = buildMessage({ reactions: [], myReactions: [], createdAt })
     const wrapper = mount(MessageBubble, {
       props: { message: msg, showHeader: true },
     })
 
-    const expected = new Date(createdAt).toLocaleString([], {
-      month: 'short',
-      day: 'numeric',
+    const expected = new Date(createdAt).toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
     })

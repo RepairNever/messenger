@@ -56,7 +56,7 @@ const props = withDefaults(defineProps<{
   displayName?: string
   avatarUrl?: string
   customStatus?: UserCustomStatus | null
-  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | 'msg'
   presence?: 'online' | 'away' | 'offline'
 }>(), {
   displayName: '',
@@ -138,6 +138,7 @@ const avatarSizeClasses: Record<AvatarSize, string> = {
   md: 'h-8 w-8 text-sm',
   lg: 'h-10 w-10 text-base',
   xl: 'h-14 w-14 text-xl',
+  msg: 'h-9 w-9 text-[13px]',
 }
 
 const statusIconTextClasses: Record<AvatarSize, string> = {
@@ -146,6 +147,7 @@ const statusIconTextClasses: Record<AvatarSize, string> = {
   md: 'text-2xl',
   lg: 'text-3xl',
   xl: 'text-4xl',
+  msg: 'text-2xl',
 }
 
 const presenceStateClasses: Record<AvatarPresence, string> = {

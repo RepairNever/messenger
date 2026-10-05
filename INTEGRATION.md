@@ -86,7 +86,29 @@ Response:
       "enum_dictionary_id": null,
       "enum_version": null
     }
+  ],
+  "subtasks": [
+    {"public_id": "INT-124", "title": "Prepare integration"},
+    {"public_id": "INT-125", "title": "Verify integration"}
   ]
+}
+```
+
+Fetching the subtask `INT-124` through the same endpoint returns:
+
+```json
+{
+  "public_id": "INT-124",
+  "title": "Prepare integration",
+  "description": "Prepare the integration configuration",
+  "status": {
+    "id": "3bf6d6b7-6823-4908-aee1-c2913aa7a3f4",
+    "code": "open",
+    "name": "Open"
+  },
+  "fields": [],
+  "subtasks": [],
+  "parent_public_id": "INT-123"
 }
 ```
 
@@ -95,6 +117,9 @@ Notes:
 - `public_id` is the task public ID such as `INT-123`, not the internal UUID.
 - The response merges template field metadata with the task's current field values.
 - `value_json` is returned as raw JSON when present.
+- `subtasks` is always present as an array, including `[]` when the task has no subtasks; it is never `null`. Subtasks are ordered by `created_at` ascending, matching the UI, and included regardless of status, including done or closed statuses.
+- Each subtask item contains exactly `public_id` and `title`: a pointer to fetch its full details through `GET /api/integrations/tasks/{public_id}` (or the equivalent Bot API endpoint).
+- Tasks allow one level of subtasks. A top-level task omits `parent_public_id`; a subtask returns its parent's public ID and `subtasks: []`.
 - Current implementation does not enforce teamspace membership for task reads. Any valid active bot token can fetch a task if it knows the task public ID.
 
 Common responses:
@@ -165,6 +190,7 @@ Rules:
 - Both `enum` and `multi_enum` task fields are searched.
 - Historical dictionary versions are included, so tasks using older enum versions remain discoverable after later enum changes.
 - Results are capped at 200 items and ordered by task `updated_at` descending, then task `id` descending.
+- Enum lookups keep the response shape shown above and do not include `subtasks` or `parent_public_id`. Fetch a task through the task-details endpoint to retrieve those fields.
 - `enum_value` must be URL-encoded by the caller when it contains spaces or other reserved path characters.
 
 Common responses:

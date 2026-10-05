@@ -38,6 +38,8 @@ var (
 	ErrInvalidEncryptedPayload      = errors.New("invalid encrypted message payload")
 	ErrEncryptedMessageUnsupported  = errors.New("encrypted message action is not supported")
 	ErrE2EERecoveryDeviceOwnership  = errors.New("e2ee recovery device does not belong to user")
+	ErrMessageTooLarge              = errors.New("message body exceeds the maximum allowed length")
+	ErrInvalidClientMsgID           = errors.New("invalid client_msg_id")
 )
 
 // Service handles messaging, reactions, and thread subscriptions.
@@ -53,7 +55,33 @@ type Service struct {
 const (
 	defaultAttachmentMaxSizeMB = 50
 	maxMessageAttachments      = 5
+
+	// MaxMessageBodyRunes caps the message body length in runes. Every
+	// authoring path (websocket, bot API, message edit) enforces it.
+	MaxMessageBodyRunes = 32000
+	// MaxMessageEntities caps the number of entities attached to one message.
+	MaxMessageEntities = 100
+	// clientMsgIDMaxLen caps the idempotency key persisted per message.
+	clientMsgIDMaxLen = 128
 )
+
+// IsValidClientMsgID reports whether id may be used as a message idempotency
+// key: 1..clientMsgIDMaxLen characters from [A-Za-z0-9._:~-]. The restriction
+// keeps the deduplication index usable and client ids log-safe.
+func IsValidClientMsgID(id string) bool {
+	if id == "" || len(id) > clientMsgIDMaxLen {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.' || r == '_' || r == ':' || r == '~' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 // NewService creates a chat Service.
 func NewService(pool *pgxpool.Pool, eventStore *events.Store) *Service {

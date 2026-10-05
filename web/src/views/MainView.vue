@@ -184,12 +184,12 @@
     <Teleport to="body">
       <div
         v-if="settingsOpen"
-        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+        class="dlg-overlay z-50"
         @click.self="closeSettings"
       >
-        <div class="flex w-full max-w-lg flex-col overflow-hidden rounded-xl border border-chat-border bg-chat-header shadow-2xl max-h-[90vh]">
-          <div class="shrink-0 border-b border-chat-border px-5 pt-4">
-            <h2 class="text-lg font-semibold text-app-text">Profile</h2>
+        <div class="dlg-window max-w-lg max-h-[90vh]">
+          <div class="dlg-head shrink-0 border-b border-app-divider px-5 pt-4">
+            <h2 class="dlg-title text-lg">Profile</h2>
             <div class="mt-4 flex gap-1 overflow-x-auto" role="tablist" aria-label="Profile settings sections">
               <button
                 v-for="tab in profileSettingsTabs"
@@ -555,9 +555,9 @@
             {{ settingsPasswordSuccess }}
           </div>
 
-          <div class="flex shrink-0 gap-3 border-t border-chat-border px-5 py-4">
+          <div class="flex shrink-0 gap-3 border-t border-app-divider px-5 py-4">
             <button
-              class="py-2 rounded bg-chat-msgHover hover:bg-app-tertiary text-app-secondaryText text-sm transition-colors"
+              class="dlg-btn dlg-btn-ghost flex-1"
               :class="settingsActiveTab === 'security' ? 'w-full' : 'flex-1'"
               :disabled="settingsLoading || settingsE2EEBusy"
               @click="closeSettings"
@@ -566,7 +566,7 @@
             </button>
             <button
               v-if="settingsActiveTab === 'profile' || settingsActiveTab === 'status'"
-              class="flex-1 py-2 rounded bg-accent hover:bg-accent-hover text-app-onAccent text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+              class="dlg-btn dlg-btn-primary flex-1"
               :disabled="!canSaveSettings || settingsLoading"
               @click="saveSettings"
             >
@@ -574,7 +574,7 @@
             </button>
             <button
               v-if="settingsActiveTab === 'password'"
-              class="flex-1 py-2 rounded bg-accent hover:bg-accent-hover text-app-onAccent text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+              class="dlg-btn dlg-btn-primary flex-1"
               :disabled="settingsPasswordLoading || (!settingsNewPassword && !settingsConfirmPassword)"
               @click="savePassword"
             >

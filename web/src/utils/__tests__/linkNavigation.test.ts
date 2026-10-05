@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Router } from 'vue-router'
-import { handleMarkdownLinkClick, openMarkdownLink, resolveMarkdownLinkTarget } from '@/utils/linkNavigation'
+import { handleMarkdownLinkClick, isSafeMessageUrl, openMarkdownLink, resolveMarkdownLinkTarget } from '@/utils/linkNavigation'
 
 const platformMocks = vi.hoisted(() => ({
   getPlatformOrNull: vi.fn(),
@@ -89,6 +89,24 @@ describe('linkNavigation', () => {
     const target = resolveMarkdownLinkTarget('msgnr-mention://user/user-1', router)
 
     expect(target.kind).toBe('mention-user')
+  })
+
+  it('treats dangerous schemes as invalid navigation targets', () => {
+    const router = createRouterMock()
+
+    for (const href of ['javascript:alert(document.cookie)', 'data:text/html,<script>', 'vbscript:msgbox']) {
+      expect(isSafeMessageUrl(href)).toBe(false)
+      expect(resolveMarkdownLinkTarget(href, router).kind).toBe('invalid')
+    }
+  })
+
+  it('treats attachment, mention, relative and web urls as safe', () => {
+    expect(isSafeMessageUrl('msgnr-attachment://task/t-1/a-1')).toBe(true)
+    expect(isSafeMessageUrl('msgnr-mention://user/user-1')).toBe(true)
+    expect(isSafeMessageUrl('/tasks/dev-1')).toBe(true)
+    expect(isSafeMessageUrl('mailto:someone@example.com')).toBe(true)
+    expect(isSafeMessageUrl('https://example.com/docs')).toBe(true)
+    expect(isSafeMessageUrl('')).toBe(false)
   })
 
   it('handles delegated markdown clicks on anchors', () => {

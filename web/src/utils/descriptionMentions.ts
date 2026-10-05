@@ -35,7 +35,7 @@ const USER_MENTION_CLASSES = [
   ...MENTION_BASE_CLASSES,
   'border-accent/30',
   'bg-accent/10',
-  'text-accent',
+  'text-accent-text',
   'hover:border-accent/60',
   'hover:bg-accent/15',
   'hover:text-white',

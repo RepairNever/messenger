@@ -51,7 +51,7 @@
             <td class="px-2 py-2 text-center">
               <span v-if="!field.deleted_at" class="text-gray-600 cursor-grab select-none">⠿</span>
             </td>
-            <td class="px-3 py-2 font-mono text-accent">{{ field.code }}</td>
+            <td class="px-3 py-2 font-mono text-accent-text">{{ field.code }}</td>
             <td class="px-3 py-2 text-gray-300">{{ field.name }}</td>
             <td class="px-3 py-2 text-gray-400">
               <span class="px-1.5 py-0.5 rounded bg-white/10 font-mono">{{ field.type }}</span>
@@ -85,47 +85,47 @@
     <Teleport to="body">
       <div
         v-if="dialogOpen"
-        class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+        class="dlg-overlay z-50"
         @click.self="dialogOpen = false"
       >
-        <div class="bg-[#222529] border border-chat-border rounded-xl shadow-2xl w-full max-w-sm p-6">
-          <h3 class="text-base font-bold text-white mb-4">
+        <div class="dlg-window p-6" role="dialog" aria-modal="true">
+          <h3 class="dlg-title mb-4">
             {{ isEdit ? 'Edit Field' : 'Add Field' }}
           </h3>
 
           <div class="space-y-3">
             <!-- Code (create only) -->
             <div>
-              <label class="block text-xs text-gray-400 mb-1">
-                Code <span class="text-gray-600">(a-z, 0-9, _; starts with letter)</span>
+              <label class="dlg-label">
+                Code <span class="text-app-muted">(a-z, 0-9, _; starts with letter)</span>
               </label>
               <input
                 v-model="form.code"
                 type="text"
                 :disabled="isEdit"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm font-mono outline-none focus:border-accent disabled:opacity-50"
+                class="dlg-input font-mono disabled:opacity-50"
                 placeholder="my_field"
               />
             </div>
 
             <!-- Name -->
             <div>
-              <label class="block text-xs text-gray-400 mb-1">Name</label>
+              <label class="dlg-label">Name</label>
               <input
                 v-model="form.name"
                 type="text"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
                 placeholder="My Field"
               />
             </div>
 
             <!-- Type (create only) -->
             <div>
-              <label class="block text-xs text-gray-400 mb-1">Type</label>
+              <label class="dlg-label">Type</label>
               <select
                 v-model="form.type"
                 :disabled="isEdit"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent disabled:opacity-50"
+                class="dlg-input appearance-none disabled:opacity-50"
                 @change="onTypeChange"
               >
                 <option v-for="t in FIELD_TYPES" :key="t" :value="t">{{ t }}</option>
@@ -134,11 +134,11 @@
 
             <!-- Enum dictionary (enum / multi_enum only) -->
             <div v-if="isEnumType">
-              <label class="block text-xs text-gray-400 mb-1">Dictionary</label>
+              <label class="dlg-label">Dictionary</label>
               <select
                 v-model="form.enum_dictionary_id"
                 :disabled="isEdit"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent disabled:opacity-50"
+                class="dlg-input appearance-none disabled:opacity-50"
               >
                 <option value="">— select —</option>
                 <option v-for="d in dictionaries" :key="d.id" :value="d.id">{{ d.name }} ({{ d.code }})</option>
@@ -147,11 +147,11 @@
 
             <!-- Field role (user / users only) -->
             <div v-if="isUserType">
-              <label class="block text-xs text-gray-400 mb-1">Role</label>
+              <label class="dlg-label">Role</label>
               <select
                 v-model="form.field_role"
                 :disabled="isEdit"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent disabled:opacity-50"
+                class="dlg-input appearance-none disabled:opacity-50"
               >
                 <option :value="null">None</option>
                 <option value="assignee">assignee</option>
@@ -159,31 +159,31 @@
             </div>
 
             <!-- Required -->
-            <label class="flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
+            <label class="flex items-center gap-2 text-sm text-app-text cursor-pointer">
               <input v-model="form.required" type="checkbox" class="h-4 w-4 rounded" />
               Required
             </label>
 
             <!-- Sort order (create only) -->
             <div v-if="!isEdit">
-              <label class="block text-xs text-gray-400 mb-1">Sort order</label>
+              <label class="dlg-label">Sort order</label>
               <input
                 v-model.number="form.sort_order"
                 type="number"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
               />
             </div>
           </div>
 
-          <div v-if="dialogError" class="text-red-400 text-xs mt-3">{{ dialogError }}</div>
+          <div v-if="dialogError" class="text-app-danger text-xs mt-3">{{ dialogError }}</div>
 
           <div class="flex gap-3 mt-5">
             <button
-              class="flex-1 py-2 rounded bg-white/10 hover:bg-white/20 text-gray-200 text-sm transition-colors"
+              class="dlg-btn dlg-btn-ghost flex-1"
               @click="dialogOpen = false"
             >Cancel</button>
             <button
-              class="flex-1 py-2 rounded bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
+              class="dlg-btn dlg-btn-primary flex-1"
               :disabled="dialogLoading"
               @click="submitDialog"
             >{{ dialogLoading ? 'Saving...' : 'Save' }}</button>

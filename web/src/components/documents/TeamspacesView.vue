@@ -52,7 +52,7 @@
                 <button
                   v-if="!teamspace.is_member"
                   type="button"
-                  class="rounded border border-accent/50 px-2 py-1 text-xs font-medium text-accent transition-colors hover:border-accent hover:text-white"
+                  class="rounded border border-accent/50 px-2 py-1 text-xs font-medium text-accent-text transition-colors hover:border-accent hover:text-white"
                   :data-testid="`teamspace-join-${teamspace.id}`"
                   @click="joinTeamspace(teamspace.id)"
                 >
@@ -130,19 +130,19 @@
   <Teleport to="body">
     <div
       v-if="deleteConfirmOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      class="dlg-overlay z-50"
       @click.self="closeDeleteConfirm"
     >
-      <div class="w-full max-w-sm rounded-xl border border-chat-border bg-chat-header p-5 shadow-2xl">
-        <h3 class="text-base font-semibold text-white">Delete teamspace?</h3>
-        <p class="mt-2 text-sm text-gray-300">
+      <div class="dlg-window max-w-sm p-5" role="dialog" aria-modal="true" aria-label="Delete teamspace?">
+        <h3 class="dlg-title">Delete teamspace?</h3>
+        <p class="mt-2 text-sm text-app-secondaryText">
           This will hide "{{ deleteTeamspaceName }}" and archive all documents in it.
         </p>
-        <p v-if="deleteError" class="mt-3 text-xs text-red-400">{{ deleteError }}</p>
+        <p v-if="deleteError" class="mt-3 text-xs text-app-danger">{{ deleteError }}</p>
         <div class="mt-4 flex justify-end gap-2">
           <button
             type="button"
-            class="rounded border border-chat-border px-3 py-1.5 text-sm text-gray-300 transition-colors hover:text-white"
+            class="dlg-btn dlg-btn-ghost"
             :disabled="deleteSaving"
             @click="closeDeleteConfirm"
           >
@@ -150,7 +150,7 @@
           </button>
           <button
             type="button"
-            class="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-red-500 disabled:opacity-50"
+            class="dlg-btn dlg-btn-danger"
             :disabled="deleteSaving"
             data-testid="teamspace-delete-confirm"
             @click="confirmDeleteTeamspace"
@@ -165,15 +165,15 @@
   <Teleport to="body">
     <div
       v-if="modalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      class="dlg-overlay z-50"
       @click.self="closeModal"
     >
-      <div class="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-chat-border bg-chat-header shadow-2xl">
-        <div class="flex items-center justify-between border-b border-chat-border px-5 py-4">
-          <h3 class="text-base font-semibold text-white">
+      <div class="dlg-window flex max-h-[80vh] max-w-lg flex-col overflow-hidden">
+        <div class="dlg-head flex items-center justify-between border-b border-app-divider px-5 py-4">
+          <h3 class="dlg-title">
             {{ editingTeamspaceId ? 'Edit teamspace' : 'Create teamspace' }}
           </h3>
-          <button type="button" class="rounded p-1 text-gray-400 transition-colors hover:text-white" @click="closeModal">
+          <button type="button" class="rounded p-1 text-app-muted transition-colors hover:text-app-text" @click="closeModal">
             <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
@@ -182,34 +182,34 @@
 
         <div class="flex-1 space-y-4 overflow-y-auto px-5 py-4">
           <div>
-            <label class="mb-1 block text-sm text-gray-400">Name</label>
+            <label class="dlg-label">Name</label>
             <input
               v-model="form.name"
               type="text"
-              class="w-full rounded border border-chat-border bg-chat-input px-3 py-2 text-sm text-white outline-none focus:border-accent"
+              class="dlg-input"
               placeholder="Engineering docs"
             >
           </div>
 
-          <label class="flex items-center gap-2 text-sm text-gray-300">
-            <input v-model="form.is_private" type="checkbox" class="h-4 w-4 rounded border-chat-border bg-chat-input">
+          <label class="flex items-center gap-2 text-sm text-app-secondaryText">
+            <input v-model="form.is_private" type="checkbox" class="h-4 w-4 rounded border-app-divider bg-app-input">
             Private teamspace
           </label>
 
           <div>
-            <div class="mb-2 text-sm text-gray-400">Members</div>
-            <div v-if="!documentsStore.usersLoaded" class="text-xs text-gray-500">Loading users...</div>
-            <div v-else class="max-h-64 space-y-2 overflow-y-auto rounded border border-chat-border bg-chat-input/50 p-2">
+            <div class="mb-2 text-sm text-app-muted">Members</div>
+            <div v-if="!documentsStore.usersLoaded" class="text-xs text-app-muted">Loading users...</div>
+            <div v-else class="max-h-64 space-y-2 overflow-y-auto rounded border border-app-divider bg-app-input/50 p-2">
               <label
                 v-for="user in availableMembers"
                 :key="user.id"
-                class="flex cursor-pointer items-center gap-3 rounded px-2 py-1.5 text-sm text-gray-200 hover:bg-white/5"
+                class="flex cursor-pointer items-center gap-3 rounded px-2 py-1.5 text-sm text-app-text hover:bg-app-hover"
               >
                 <input
                   :checked="selectedMemberIds.includes(user.id)"
                   :data-testid="`teamspace-member-${user.id}`"
                   type="checkbox"
-                  class="h-4 w-4 rounded border-chat-border bg-chat-input"
+                  class="h-4 w-4 rounded border-app-divider bg-app-input"
                   @change="toggleMember(user.id)"
                 >
                 <UserAvatar
@@ -226,17 +226,17 @@
             <p v-if="canAddBots && documentsStore.botsLoading" class="mt-2 text-xs text-app-muted">Loading bots...</p>
             <p v-if="canAddBots && documentsStore.botsError" role="alert" class="mt-2 text-xs text-app-text">
               {{ documentsStore.botsError }}
-              <button type="button" class="ml-2 text-accent underline" @click="documentsStore.loadBots()">Retry</button>
+              <button type="button" class="ml-2 text-accent-text underline" @click="documentsStore.loadBots()">Retry</button>
             </p>
           </div>
 
-          <p v-if="modalError" class="text-xs text-red-400">{{ modalError }}</p>
+          <p v-if="modalError" class="text-xs text-app-danger">{{ modalError }}</p>
         </div>
 
-        <div class="flex justify-end gap-2 border-t border-chat-border px-5 py-4">
+        <div class="dlg-foot justify-end px-5 py-4">
           <button
             type="button"
-            class="rounded border border-chat-border px-3 py-1.5 text-sm text-gray-300 transition-colors hover:text-white"
+            class="dlg-btn dlg-btn-ghost"
             :disabled="modalSaving"
             @click="closeModal"
           >
@@ -244,7 +244,7 @@
           </button>
           <button
             type="button"
-            class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+            class="dlg-btn dlg-btn-primary"
             :disabled="modalSaving || !form.name.trim()"
             @click="submitModal"
           >

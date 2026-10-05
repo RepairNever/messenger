@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
 @import './styles/markdown.css';
+@import './styles/dialog.css';
 
 @tailwind base;
 @tailwind components;
@@ -8,34 +9,35 @@
 :root {
     /* FOUC guard: these defaults mirror the dark preset in services/theme/themes.ts. */
     color-scheme: dark;
-    --color-bg-primary: 13 17 24;
-    --color-bg-secondary: 10 13 20;
-    --color-bg-tertiary: 24 30 41;
-    --color-surface: 13 17 24;
-    --color-surface-hover: 20 26 36;
-    --color-input: 18 23 32;
-    --color-divider: 48 58 76;
-    --color-text-primary: 237 242 250;
-    --color-text-secondary: 191 203 221;
-    --color-text-muted: 134 150 173;
+    --color-bg-primary: 14 15 19;
+    --color-bg-secondary: 20 22 27;
+    --color-bg-tertiary: 26 29 36;
+    --color-surface: 20 22 27;
+    --color-surface-hover: 34 37 44;
+    --color-input: 26 29 36;
+    --color-divider: 38 42 51;
+    --color-text-primary: 233 235 240;
+    --color-text-secondary: 180 184 194;
+    --color-text-muted: 130 134 143;
     --color-text-on-accent: 255 255 255;
-    --color-accent: 59 130 246;
-    --color-accent-hover: 96 165 250;
-    --color-selection-bg: 37 99 235;
+    --color-accent: 56 45 99;
+    --color-accent-hover: 56 43 107;
+    --color-accent-text: 44 34 156;
+    --color-selection-bg: 56 45 99;
     --color-selection-text: 255 255 255;
-    --color-selection-border: 96 165 250;
+    --color-selection-border: 56 43 107;
     --color-task-id: 224 168 84;
     --color-task-id-bg: 46 39 24;
-    --color-status-green: 52 211 153;
-    --color-status-red: 248 113 113;
+    --color-status-green: 76 212 138;
+    --color-status-red: 242 109 109;
     --color-status-amber: 251 191 36;
-    --color-sidebar-bg: 10 13 20;
-    --color-sidebar-hover: 24 30 41;
-    --color-sidebar-text: 205 214 228;
-    --color-sidebar-text-muted: 130 145 168;
-    --color-sidebar-heading: 96 110 134;
+    --color-sidebar-bg: 20 22 27;
+    --color-sidebar-hover: 34 37 44;
+    --color-sidebar-text: 196 200 208;
+    --color-sidebar-text-muted: 130 134 143;
+    --color-sidebar-heading: 110 115 126;
     --color-sidebar-unread-badge: 255 190 190;
-    --color-inline-code-text: 96 165 250;
+    --color-inline-code-text: 196 181 253;
 }
 
 html,
@@ -52,7 +54,8 @@ body {
 }
 
 ::selection {
-    background: rgb(var(--color-selection-bg) / 0.35);
+    background: #254d4f;
+    color: #a3b0e5;
 }
 
 @layer utilities {

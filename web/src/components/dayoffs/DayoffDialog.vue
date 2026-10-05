@@ -2,24 +2,24 @@
   <Teleport to="body">
     <div
       v-if="open"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-app-tertiary/80 p-4 backdrop-blur-sm"
+      class="dlg-overlay z-50"
       @click.self="close"
       @keydown.esc="close"
     >
       <form
-        class="flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-xl border border-chat-border bg-chat-header shadow-2xl"
+        class="dlg-window flex max-h-[90vh] max-w-md flex-col overflow-hidden"
         role="dialog"
         aria-modal="true"
         aria-labelledby="dayoff-dialog-heading"
         @submit.prevent="submit"
       >
-        <div class="flex items-center justify-between border-b border-chat-border px-5 py-4">
-          <h2 id="dayoff-dialog-heading" class="text-base font-semibold text-app-text">
+        <div class="dlg-head flex items-center justify-between border-b border-app-divider px-5 py-4">
+          <h2 id="dayoff-dialog-heading" class="dlg-title">
             {{ record ? 'Edit dayoff' : 'Add dayoff' }}
           </h2>
           <button
             type="button"
-            class="rounded p-1 text-app-muted transition-colors hover:bg-chat-msgHover hover:text-app-text focus:outline-none focus:ring-2 focus:ring-accent"
+            class="rounded p-1 text-app-muted transition-colors hover:bg-app-hover hover:text-app-text focus:outline-none focus:ring-2 focus:ring-accent"
             aria-label="Close dayoff form"
             :disabled="saving"
             @click="close"
@@ -44,7 +44,7 @@
               </option>
             </select>
           </label>
-          <p v-else class="rounded-md border border-chat-border bg-chat-input/50 px-3 py-2 text-sm text-app-secondaryText">
+          <p v-else class="rounded-md border border-app-divider bg-app-input/50 px-3 py-2 text-sm text-app-secondaryText">
             This dayoff will be saved for you.
           </p>
 
@@ -82,7 +82,7 @@
                 :key="option.type"
                 type="button"
                 class="rounded-md border px-2 py-2 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
-                :class="form.type === option.type ? '' : 'border-chat-border text-app-muted hover:bg-chat-msgHover hover:text-app-text'"
+                :class="form.type === option.type ? '' : 'border-app-divider text-app-muted hover:bg-app-hover hover:text-app-text'"
                 :style="form.type === option.type ? option.style : undefined"
                 :aria-pressed="form.type === option.type"
                 :disabled="saving"
@@ -111,10 +111,10 @@
           </p>
         </div>
 
-        <div class="flex justify-end gap-2 border-t border-chat-border px-5 py-4">
+        <div class="dlg-foot justify-end px-5 py-4">
           <button
             type="button"
-            class="rounded-md px-3 py-2 text-sm text-app-secondaryText transition-colors hover:bg-chat-msgHover hover:text-app-text disabled:opacity-50"
+            class="dlg-btn dlg-btn-ghost"
             :disabled="saving"
             @click="close"
           >
@@ -122,7 +122,7 @@
           </button>
           <button
             type="submit"
-            class="rounded-md bg-accent px-3 py-2 text-sm font-medium text-app-onAccent transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            class="dlg-btn dlg-btn-primary"
             data-testid="dayoffs-form-submit"
             :disabled="Boolean(validationError) || saving"
           >
@@ -214,6 +214,6 @@ watch(
 
 <style scoped>
 .form-control {
-  @apply w-full rounded-md border border-chat-border bg-chat-input px-3 py-2 text-sm text-app-text outline-none transition-colors placeholder:text-app-muted focus:border-accent focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-60;
+  @apply w-full rounded-[10px] border border-app-divider bg-app-input px-3 py-2 text-[13px] text-app-text outline-none transition-colors placeholder:text-app-muted focus:border-accent/55 disabled:cursor-not-allowed disabled:opacity-60;
 }
 </style>

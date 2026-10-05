@@ -1,7 +1,7 @@
 <template>
   <div class="flex h-full min-h-0 flex-col bg-chat-header">
     <div ref="scrollEl" class="flex-1 min-h-0 overflow-y-auto" @scroll.passive="handleScroll">
-      <div v-if="!rootMessage" class="px-4 py-6 text-xs text-gray-400">
+      <div v-if="!rootMessage" class="px-4 py-6 text-xs text-app-muted">
         Root message not available.
       </div>
 
@@ -40,6 +40,15 @@
             :data-thread-message-id="reply.id"
             :class="chatStore.focusedThreadMessageId === reply.id ? 'rounded-md bg-amber-500/10 ring-1 ring-inset ring-amber-300/40' : ''"
           >
+            <div
+              v-if="shouldShowDayDivider(idx)"
+              data-testid="day-divider"
+              class="my-3 flex items-center gap-3 px-2"
+            >
+              <div class="h-px flex-1 bg-chat-border" />
+              <span class="shrink-0 rounded-full border border-chat-border bg-chat-header px-3 py-1 text-xs font-semibold text-app-muted">{{ dayDividerLabel(reply.createdAt) }}</span>
+              <div class="h-px flex-1 bg-chat-border" />
+            </div>
             <MessageBubble
               :message="reply"
               :show-header="shouldShowHeader(idx)"
@@ -158,6 +167,26 @@ function shouldShowHeader(idx: number): boolean {
   if (!prev || !curr) return true
   if (prev.senderId !== curr.senderId) return true
   return new Date(curr.createdAt).getTime() - new Date(prev.createdAt).getTime() > 5 * 60 * 1000
+}
+
+function shouldShowDayDivider(idx: number): boolean {
+  if (idx === 0) return true
+  const prev = replies.value[idx - 1]
+  const curr = replies.value[idx]
+  if (!prev || !curr) return true
+  return localDayKey(prev.createdAt) !== localDayKey(curr.createdAt)
+}
+
+function localDayKey(createdAt: string): string {
+  const d = new Date(createdAt)
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+}
+
+function dayDividerLabel(createdAt: string): string {
+  const date = new Date(createdAt)
+  const options: Intl.DateTimeFormatOptions = { month: 'long', day: 'numeric' }
+  if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric'
+  return date.toLocaleDateString(undefined, options)
 }
 
 function scrollToBottom() {

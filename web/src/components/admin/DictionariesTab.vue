@@ -140,31 +140,31 @@
 
     <!-- Create dictionary dialog -->
     <Teleport to="body">
-      <div v-if="createOpen" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" @click.self="createOpen = false">
-        <div class="bg-[#222529] border border-chat-border rounded-xl shadow-2xl w-full max-w-sm p-6">
-          <h3 class="text-lg font-bold text-white mb-4">Create Dictionary</h3>
+      <div v-if="createOpen" class="dlg-overlay z-50" @click.self="createOpen = false">
+        <div class="dlg-window p-6" role="dialog" aria-modal="true" aria-label="Create Dictionary">
+          <h3 class="dlg-title mb-4">Create Dictionary</h3>
           <div class="space-y-3">
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Code</label>
-              <input v-model="createForm.code" type="text" class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm font-mono outline-none focus:border-accent" placeholder="priority" />
+              <label class="dlg-label">Code</label>
+              <input v-model="createForm.code" type="text" class="dlg-input font-mono" placeholder="priority" />
             </div>
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Name</label>
-              <input v-model="createForm.name" type="text" class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent" placeholder="Priority" />
+              <label class="dlg-label">Name</label>
+              <input v-model="createForm.name" type="text" class="dlg-input" placeholder="Priority" />
             </div>
-            <label class="flex items-center gap-2 rounded border border-chat-border px-3 py-2 text-sm text-gray-300">
-              <input v-model="createForm.is_public" type="checkbox" class="rounded border-chat-border bg-chat-input text-accent focus:ring-accent" />
+            <label class="flex items-center gap-2 rounded border border-app-divider px-3 py-2 text-sm text-app-secondaryText">
+              <input v-model="createForm.is_public" type="checkbox" class="rounded border-app-divider bg-app-input text-accent-text focus:ring-accent" />
               Is Public
             </label>
-            <label class="flex items-center gap-2 rounded border border-chat-border px-3 py-2 text-sm text-gray-300">
-              <input v-model="createForm.participates_in_filtration" type="checkbox" class="rounded border-chat-border bg-chat-input text-accent focus:ring-accent" />
+            <label class="flex items-center gap-2 rounded border border-app-divider px-3 py-2 text-sm text-app-secondaryText">
+              <input v-model="createForm.participates_in_filtration" type="checkbox" class="rounded border-app-divider bg-app-input text-accent-text focus:ring-accent" />
               Participates in filtration
             </label>
           </div>
-          <div v-if="createError" class="text-red-400 text-sm mt-3">{{ createError }}</div>
+          <div v-if="createError" class="text-app-danger text-sm mt-3">{{ createError }}</div>
           <div class="flex gap-3 mt-5">
-            <button class="flex-1 py-2 rounded bg-white/10 hover:bg-white/20 text-gray-200 text-sm transition-colors" @click="createOpen = false">Cancel</button>
-            <button class="flex-1 py-2 rounded bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors" :disabled="createLoading" @click="submitCreate">
+            <button class="dlg-btn dlg-btn-ghost flex-1" @click="createOpen = false">Cancel</button>
+            <button class="dlg-btn dlg-btn-primary flex-1" :disabled="createLoading" @click="submitCreate">
               {{ createLoading ? 'Creating...' : 'Create' }}
             </button>
           </div>
@@ -172,15 +172,15 @@
       </div>
 
       <!-- Dictionary items dialog -->
-      <div v-if="versionOpen" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" @click.self="versionOpen = false">
-        <div class="bg-[#222529] border border-chat-border rounded-xl shadow-2xl w-full max-w-none max-h-[90vh] p-6 flex flex-col">
-          <h3 class="text-lg font-bold text-white mb-1 shrink-0">Edit Items</h3>
-          <p class="text-sm text-gray-400 mb-4 shrink-0">Dictionary: <span class="text-gray-200 font-mono">{{ versionDictCode }}</span></p>
-          <div v-if="versionLoading" class="text-center text-gray-500 py-8">Loading current items...</div>
+      <div v-if="versionOpen" class="dlg-overlay z-50" @click.self="versionOpen = false">
+        <div class="dlg-window max-w-none max-h-[90vh] flex flex-col p-6" role="dialog" aria-modal="true" aria-label="Edit Items">
+          <h3 class="dlg-title mb-1 shrink-0">Edit Items</h3>
+          <p class="text-sm text-app-muted mb-4 shrink-0">Dictionary: <span class="text-app-text font-mono">{{ versionDictCode }}</span></p>
+          <div v-if="versionLoading" class="text-center text-app-muted py-8">Loading current items...</div>
           <template v-else>
             <div class="flex-1 min-h-0 overflow-y-auto pr-1">
               <div class="space-y-2 mb-3">
-              <div class="grid grid-cols-[24px_minmax(0,1fr)_minmax(0,1fr)_56px] gap-3 text-xs text-gray-400 uppercase tracking-wide px-1">
+              <div class="grid grid-cols-[24px_minmax(0,1fr)_minmax(0,1fr)_56px] gap-3 text-xs text-app-muted uppercase tracking-wide px-1">
                 <span></span><span>Code</span><span>Name</span><span class="text-center">Active</span>
               </div>
               <div
@@ -194,27 +194,27 @@
                 @drop.prevent="onDrop"
               >
                 <div class="flex justify-center">
-                  <span class="text-gray-600 cursor-grab select-none">⠿</span>
+                  <span class="text-app-muted cursor-grab select-none">⠿</span>
                 </div>
-                <input v-model="item.value_code" type="text" class="bg-chat-input border border-chat-border rounded px-2 py-1.5 text-white text-sm font-mono outline-none focus:border-accent" placeholder="code" />
-                <input v-model="item.value_name" type="text" class="bg-chat-input border border-chat-border rounded px-2 py-1.5 text-white text-sm outline-none focus:border-accent" placeholder="Name" />
+                <input v-model="item.value_code" type="text" class="dlg-input font-mono py-1.5" placeholder="code" />
+                <input v-model="item.value_name" type="text" class="dlg-input py-1.5" placeholder="Name" />
                 <div class="flex justify-center">
                   <button
                     class="relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200"
-                    :class="item.is_active ? 'bg-accent' : 'bg-white/20'"
+                    :class="item.is_active ? 'bg-accent' : 'bg-app-divider'"
                     @click="item.is_active = !item.is_active"
                   >
-                    <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200" :class="item.is_active ? 'translate-x-4' : 'translate-x-0'" />
+                    <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-app-onAccent shadow transition duration-200" :class="item.is_active ? 'translate-x-4' : 'translate-x-0'" />
                   </button>
                 </div>
               </div>
               </div>
             </div>
-            <button class="w-full py-1.5 text-sm text-gray-400 hover:text-white border border-dashed border-white/20 rounded hover:border-white/40 transition-colors mt-4 mb-4 shrink-0" @click="addItem">+ Add Item</button>
-            <div v-if="versionError" class="text-red-400 text-sm mb-3 shrink-0">{{ versionError }}</div>
+            <button class="w-full py-1.5 text-sm text-app-muted hover:text-app-text border border-dashed border-app-divider rounded hover:border-app-text/40 transition-colors mt-4 mb-4 shrink-0" @click="addItem">+ Add Item</button>
+            <div v-if="versionError" class="text-app-danger text-sm mb-3 shrink-0">{{ versionError }}</div>
             <div class="flex gap-3 shrink-0">
-              <button class="flex-1 py-2 rounded bg-white/10 hover:bg-white/20 text-gray-200 text-sm transition-colors" @click="versionOpen = false">Cancel</button>
-              <button class="flex-1 py-2 rounded bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors" :disabled="versionLoading" @click="submitVersion">
+              <button class="dlg-btn dlg-btn-ghost flex-1" @click="versionOpen = false">Cancel</button>
+              <button class="dlg-btn dlg-btn-primary flex-1" :disabled="versionLoading" @click="submitVersion">
                 {{ versionLoading ? 'Saving...' : 'Save Changes' }}
               </button>
             </div>

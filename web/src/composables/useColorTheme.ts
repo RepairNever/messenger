@@ -19,6 +19,7 @@ export const cssThemeTokenNames: Record<ColorThemeTokenName, string> = {
   textOnAccent: 'text-on-accent',
   accent: 'accent',
   accentHover: 'accent-hover',
+  accentText: 'accent-text',
   selectionBg: 'selection-bg',
   selectionText: 'selection-text',
   selectionBorder: 'selection-border',

@@ -732,4 +732,17 @@ describe('MessageInput', () => {
     })
     expect(localStorage.getItem('msgnr:chat:drafts:v1')).toBeNull()
   })
+
+  it('renders the emoji trigger as an inline SVG icon rather than a text glyph', () => {
+    const wrapper = mount(MessageInput, {
+      props: {
+        channelName: 'general',
+        disabled: false,
+      },
+    })
+
+    const button = wrapper.get('[data-testid="composer-emoji-button"]')
+    expect(button.find('svg').exists()).toBe(true)
+    expect(button.text()).not.toContain('🙂')
+  })
 })

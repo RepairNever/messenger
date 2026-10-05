@@ -2,7 +2,7 @@
   <aside class="flex h-full w-full min-w-0 flex-col bg-sidebar-bg select-none">
 
     <!-- Workspace header -->
-    <div class="flex items-center justify-between px-4 py-3 border-b border-white/10 transition-colors">
+    <div class="flex h-14 shrink-0 items-center justify-between border-b border-chat-border px-4 transition-colors">
       <span class="font-bold text-white text-[15px] truncate">Msgnr</span>
     </div>
 
@@ -12,35 +12,36 @@
       <!-- Search -->
       <button
         data-testid="sidebar-search-button"
-        class="w-full flex items-center gap-2 px-3 py-1.5 mx-1 rounded text-sidebar-text hover:bg-sidebar-hover text-sm transition-colors"
-        style="width: calc(100% - 8px)"
+        class="mx-2 flex w-[calc(100%-16px)] items-center gap-2 rounded-full border border-chat-border bg-app-tertiary px-3 py-1.5 text-sm text-sidebar-text transition-colors hover:bg-sidebar-hover"
         @click="$emit('search')"
       >
         <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
         </svg>
         <span class="text-sidebar-textMuted">Search</span>
-        <span class="ml-auto text-xs text-sidebar-heading bg-white/10 px-1.5 py-0.5 rounded">⌘K</span>
+        <span class="ml-auto rounded border border-chat-border bg-chat-bg px-1.5 py-0.5 text-[10.5px] text-sidebar-textMuted">⌘K</span>
       </button>
 
       <div class="mt-3">
         <div class="relative mx-1">
           <button
             data-testid="sidebar-unread-button"
-            class="flex min-h-9 w-full items-center gap-2 rounded px-3 py-1 text-left text-[15px] transition-colors"
+            class="flex min-h-8 w-full items-center gap-2 rounded-full px-3 py-1 text-left text-[15px] transition-colors"
             :class="chatStore.chatViewMode === 'unread'
-              ? 'bg-sidebar-active text-white'
+              ? 'bg-sidebar-active text-app-selectionText'
               : (chatStore.totalUnreadCount > 0 ? 'text-sidebar-text hover:bg-sidebar-hover' : 'text-sidebar-textMuted hover:bg-sidebar-hover')"
             @click="openUnreadView"
           >
-            <span class="flex w-8 shrink-0 items-center justify-center text-sidebar-textMuted">
+            <span class="flex w-8 shrink-0 items-center justify-center" :class="chatStore.chatViewMode === 'unread' ? 'text-app-selectionText' : 'text-sidebar-textMuted'">
               <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
               </svg>
             </span>
             <span
               class="flex-1 truncate"
-              :class="chatStore.totalUnreadCount > 0 ? 'font-semibold text-white' : 'font-normal text-sidebar-text'"
+              :class="chatStore.chatViewMode === 'unread'
+                ? 'font-semibold text-app-selectionText'
+                : (chatStore.totalUnreadCount > 0 ? 'font-semibold text-white' : 'font-normal text-sidebar-text')"
             >
               Unread
             </span>
@@ -56,18 +57,18 @@
         <div class="relative mx-1 mt-0.5">
           <button
             data-testid="sidebar-saved-button"
-            class="flex min-h-9 w-full items-center gap-2 rounded px-3 py-1 text-left text-[15px] transition-colors"
+            class="flex min-h-8 w-full items-center gap-2 rounded-full px-3 py-1 text-left text-[15px] transition-colors"
             :class="chatStore.chatViewMode === 'saved'
-              ? 'bg-sidebar-active text-white'
+              ? 'bg-sidebar-active text-app-selectionText'
               : 'text-sidebar-text hover:bg-sidebar-hover'"
             @click="openSavedView"
           >
-            <span class="flex w-8 shrink-0 items-center justify-center text-sidebar-textMuted">
+            <span class="flex w-8 shrink-0 items-center justify-center" :class="chatStore.chatViewMode === 'saved' ? 'text-app-selectionText' : 'text-sidebar-textMuted'">
               <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M19 21 12 17 5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
               </svg>
             </span>
-            <span class="flex-1 truncate font-normal text-sidebar-text">Saved Message</span>
+            <span class="flex-1 truncate" :class="chatStore.chatViewMode === 'saved' ? 'font-semibold text-app-selectionText' : 'font-normal text-sidebar-text'">Saved Message</span>
           </button>
         </div>
       </div>
@@ -80,7 +81,7 @@
             @click="channelsOpen = !channelsOpen"
           >
             <svg
-              class="w-3 h-3 text-sidebar-heading transition-transform shrink-0"
+              class="h-3.5 w-3.5 text-sidebar-heading transition-transform shrink-0"
               :class="channelsOpen ? 'rotate-90' : ''"
               fill="currentColor" viewBox="0 0 20 20"
             >
@@ -107,19 +108,25 @@
             :active="isConversationActive(ch.id)"
             :unread="ch.unread"
             :muted="ch.notificationLevel === NotificationLevel.NOTHING"
+            :actions-pinned="isConversationMenuOpen('channel', ch.id)"
             @click="openConversation(ch.id)"
+            @contextmenu.prevent="toggleConversationMenu('channel', ch.id)"
           >
             <template #icon>
-              <span v-if="ch.visibility === 'private'" class="text-sidebar-textMuted" :data-testid="`channel-private-icon-${ch.id}`">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <span v-if="ch.visibility === 'private'" class="flex" :class="isConversationActive(ch.id) ? 'text-app-selectionText' : 'text-sidebar-textMuted'" :data-testid="`channel-private-icon-${ch.id}`">
+                <svg class="h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                   <rect x="5" y="11" width="14" height="10" rx="2" ry="2" />
                   <path d="M8 11V8a4 4 0 1 1 8 0v3" />
                 </svg>
               </span>
-              <span v-else class="text-sidebar-textMuted text-[24px] leading-none font-semibold">#</span>
+              <span v-else class="flex" :class="isConversationActive(ch.id) ? 'text-app-selectionText' : 'text-sidebar-textMuted'" :data-testid="`channel-hash-icon-${ch.id}`">
+                <svg class="h-[18px] w-[18px]" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+                  <path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18" />
+                </svg>
+              </span>
             </template>
             <span class="inline-flex items-center gap-1">
-              <span>{{ ch.name }}</span>
+              <span class="min-w-0 truncate" :title="ch.name">{{ ch.name }}</span>
               <CallPresenceIcon
                 v-if="hasActiveCall(ch.id)"
                 :testid="`active-call-icon-channel-${ch.id}`"
@@ -130,8 +137,7 @@
               <div class="relative z-40" data-conversation-menu-root @click.stop>
                 <button
                   :data-testid="`conversation-menu-button-channel-${ch.id}`"
-                  class="h-6 w-6 rounded text-sidebar-textMuted hover:text-sidebar-text hover:bg-sidebar-hover opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                  :class="isConversationMenuOpen('channel', ch.id) ? 'opacity-100' : ''"
+                  class="flex h-6 w-6 items-center justify-center rounded text-sidebar-textMuted transition-colors hover:bg-sidebar-hover hover:text-sidebar-text"
                   @click.stop="toggleConversationMenu('channel', ch.id)"
                 >
                   <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
@@ -140,16 +146,16 @@
                 </button>
                 <div
                   v-if="isConversationMenuOpen('channel', ch.id)"
-                  class="absolute right-0 top-7 z-50 min-w-40 rounded border border-white/10 bg-sidebar-bg shadow-xl"
+                  class="absolute right-0 top-8 z-50 min-w-44 rounded-lg border border-chat-border bg-chat-header p-1 shadow-2xl"
                 >
                   <NotificationLevelSelector
                     :model-value="ch.notificationLevel"
                     @update:model-value="(level) => { chatStore.setNotificationLevel(ch.id, level); closeConversationMenus() }"
                   />
-                  <div class="border-t border-white/10 p-1">
+                  <div class="mt-1 border-t border-white/10 pt-1">
                     <button
                       :data-testid="`conversation-leave-channel-${ch.id}`"
-                      class="w-full text-left px-2 py-1 rounded text-xs text-red-300 hover:bg-sidebar-hover disabled:opacity-50"
+                      class="w-full rounded px-3 py-2 text-left text-sm text-red-300 transition-colors hover:bg-red-500/10 hover:text-red-200 disabled:opacity-50"
                       :disabled="isLeavingConversation('channel', ch.id)"
                       @click.stop="leaveConversationFromSidebar('channel', ch.id)"
                     >
@@ -161,7 +167,12 @@
             </template>
           </SidebarItem>
 
-
+          <div v-if="!chatStore.bootstrapped && sortedChannels.length === 0" class="mx-1 mt-0.5 space-y-1" aria-hidden="true">
+            <div v-for="i in 3" :key="i" class="h-8 animate-pulse rounded-md bg-sidebar-hover" :style="{ width: `${94 - i * 12}%` }" />
+          </div>
+          <p v-else-if="sortedChannels.length === 0" class="mx-1 px-3 py-1.5 text-xs text-sidebar-textMuted">
+            No channels yet
+          </p>
         </div>
       </div>
 
@@ -173,7 +184,7 @@
             @click="dmsOpen = !dmsOpen"
           >
             <svg
-              class="w-3 h-3 text-sidebar-heading transition-transform shrink-0"
+              class="h-3.5 w-3.5 text-sidebar-heading transition-transform shrink-0"
               :class="dmsOpen ? 'rotate-90' : ''"
               fill="currentColor" viewBox="0 0 20 20"
             >
@@ -200,7 +211,9 @@
             :active="isConversationActive(dm.id)"
             :unread="dm.unread"
             :muted="dm.notificationLevel === NotificationLevel.NOTHING"
+            :actions-pinned="isConversationMenuOpen('dm', dm.id)"
             @click="openConversation(dm.id)"
+            @contextmenu.prevent="toggleConversationMenu('dm', dm.id)"
           >
             <template #icon>
               <span class="relative inline-flex">
@@ -234,19 +247,7 @@
               >
                 {{ activeStatus(dm.customStatus)?.emoji }}
               </span>
-              <span class="min-w-0 truncate">{{ dm.displayName }}</span>
-              <svg
-                v-if="isEncryptedDirectMessage(dm)"
-                class="h-3.5 w-3.5 shrink-0 text-sidebar-textMuted"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                viewBox="0 0 24 24"
-                aria-label="Encrypted DM"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" d="M7 11V8a5 5 0 0110 0v3" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 11h12v9H6z" />
-              </svg>
+              <span class="min-w-0 truncate" :title="dm.displayName">{{ dm.displayName }}</span>
               <CallPresenceIcon
                 v-if="hasUserInCall(dm.userId)"
                 class="shrink-0"
@@ -258,8 +259,7 @@
               <div class="relative z-40" data-conversation-menu-root @click.stop>
                 <button
                   :data-testid="`conversation-menu-button-dm-${dm.id}`"
-                  class="h-6 w-6 rounded text-sidebar-textMuted hover:text-sidebar-text hover:bg-sidebar-hover opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                  :class="isConversationMenuOpen('dm', dm.id) ? 'opacity-100' : ''"
+                  class="flex h-6 w-6 items-center justify-center rounded text-sidebar-textMuted transition-colors hover:bg-sidebar-hover hover:text-sidebar-text"
                   @click.stop="toggleConversationMenu('dm', dm.id)"
                 >
                   <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
@@ -268,17 +268,17 @@
                 </button>
                 <div
                   v-if="isConversationMenuOpen('dm', dm.id)"
-                  class="absolute right-0 top-7 z-50 min-w-40 rounded border border-white/10 bg-sidebar-bg shadow-xl"
+                  class="absolute right-0 top-8 z-50 min-w-44 rounded-lg border border-chat-border bg-chat-header p-1 shadow-2xl"
                 >
                   <NotificationLevelSelector
                     :model-value="dm.notificationLevel"
                     @update:model-value="(level) => { chatStore.setNotificationLevel(dm.id, level); closeConversationMenus() }"
                   />
-                  <div class="border-t border-white/10 p-1">
+                  <div class="mt-1 border-t border-white/10 pt-1">
                     <button
                       v-if="!isEncryptedDirectMessage(dm)"
                       :data-testid="`conversation-start-e2ee-dm-${dm.id}`"
-                      class="w-full text-left px-2 py-1 rounded text-xs text-sidebar-text hover:bg-sidebar-hover disabled:opacity-50"
+                      class="w-full rounded px-3 py-2 text-left text-sm text-sidebar-text transition-colors hover:bg-sidebar-hover hover:text-white disabled:opacity-50"
                       :disabled="isStartingE2EConversation(dm.id)"
                       @click.stop="startE2ESessionFromSidebar(dm.id)"
                     >
@@ -286,7 +286,7 @@
                     </button>
                     <button
                       :data-testid="`conversation-clear-history-dm-${dm.id}`"
-                      class="w-full text-left px-2 py-1 rounded text-xs text-red-300 hover:bg-sidebar-hover disabled:opacity-50"
+                      class="w-full rounded px-3 py-2 text-left text-sm text-red-300 transition-colors hover:bg-red-500/10 hover:text-red-200 disabled:opacity-50"
                       :disabled="isClearingConversation('dm', dm.id)"
                       @click.stop="clearDMHistoryFromSidebar(dm.id)"
                     >
@@ -295,7 +295,7 @@
                     <button
                       v-if="!isSelfDirectMessage(dm.id)"
                       :data-testid="`conversation-leave-dm-${dm.id}`"
-                      class="w-full text-left px-2 py-1 rounded text-xs text-red-300 hover:bg-sidebar-hover disabled:opacity-50"
+                      class="w-full rounded px-3 py-2 text-left text-sm text-red-300 transition-colors hover:bg-red-500/10 hover:text-red-200 disabled:opacity-50"
                       :disabled="isLeavingConversation('dm', dm.id)"
                       @click.stop="leaveConversationFromSidebar('dm', dm.id)"
                     >
@@ -306,6 +306,13 @@
               </div>
             </template>
           </SidebarItem>
+
+          <div v-if="!chatStore.bootstrapped && sortedDirectMessages.length === 0" class="mx-1 mt-0.5 space-y-1" aria-hidden="true">
+            <div v-for="i in 3" :key="i" class="h-8 animate-pulse rounded-md bg-sidebar-hover" :style="{ width: `${94 - i * 12}%` }" />
+          </div>
+          <p v-else-if="sortedDirectMessages.length === 0" class="mx-1 px-3 py-1.5 text-xs text-sidebar-textMuted">
+            No conversations yet
+          </p>
         </div>
       </div>
       <div v-if="conversationActionError" class="px-3 mt-1 text-[11px] text-red-300">
@@ -418,63 +425,61 @@
   <Teleport to="body">
     <div
       v-if="channelPickerOpen"
-      class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+      class="dlg-overlay z-50"
       @click.self="closeChannelPicker"
     >
-      <div class="w-full max-w-md rounded-xl bg-sidebar-bg border border-white/10 shadow-2xl overflow-hidden">
-        <div class="px-4 py-3 border-b border-white/10">
-          <div class="text-white font-semibold text-sm">Join channels</div>
-          <div class="text-xs text-sidebar-textMuted mt-1">Select public channels you want to join.</div>
+      <div class="dlg-window" role="dialog" aria-modal="true" aria-label="Join channels">
+        <div class="dlg-head">
+          <div class="dlg-title">Join channels</div>
+          <div class="dlg-sub">Select public channels you want to join.</div>
         </div>
 
-        <div v-if="channelPickerError" class="px-4 py-3 text-sm text-red-300 border-b border-white/10">
+        <div v-if="channelPickerError" class="dlg-note dlg-note-danger">
           {{ channelPickerError }}
         </div>
 
-        <div class="max-h-80 overflow-y-auto">
+        <div class="dlg-list">
           <button
             v-for="candidate in channelCandidates"
             :key="candidate.id"
             :data-testid="`channel-candidate-${candidate.id}`"
-            class="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-sidebar-hover transition-colors"
+            class="dlg-row"
             @click="toggleChannelSelection(candidate.id)"
           >
-            <input
-              type="checkbox"
-              class="h-4 w-4"
-              :checked="selectedChannelIds.includes(candidate.id)"
-              @click.stop
-              @change="toggleChannelSelection(candidate.id)"
+            <span
+              class="dlg-check"
+              :class="selectedChannelIds.includes(candidate.id) ? 'dlg-check-on' : ''"
             >
-            <div class="text-sidebar-textMuted font-medium">#</div>
-            <div class="min-w-0">
-              <div class="text-sm text-sidebar-text truncate">{{ candidate.name }}</div>
+              <CallIcon v-if="selectedChannelIds.includes(candidate.id)" name="check" :size="13" />
+            </span>
+            <div class="min-w-0 flex-1">
+              <div class="dlg-row-name truncate"># {{ candidate.name }}</div>
             </div>
           </button>
 
-          <div v-if="!channelLoading && channelCandidates.length === 0" class="px-4 py-6 text-sm text-sidebar-textMuted text-center">
+          <div v-if="!channelLoading && channelCandidates.length === 0" class="dlg-empty">
             No available public channels
           </div>
 
-          <div v-if="channelLoading" class="px-4 py-6 text-sm text-sidebar-textMuted text-center">
+          <div v-if="channelLoading" class="dlg-empty">
             Loading channels...
           </div>
         </div>
 
-        <div class="px-4 py-3 border-t border-white/10 flex justify-end gap-2">
+        <div class="dlg-foot-end">
           <button
-            class="px-3 py-1.5 rounded text-sm text-sidebar-text hover:bg-sidebar-hover transition-colors"
+            class="dlg-btn dlg-btn-ghost"
             @click="closeChannelPicker"
           >
             Close
           </button>
           <button
             data-testid="join-selected-channels-button"
-            class="px-3 py-1.5 rounded text-sm bg-accent text-white disabled:opacity-50 disabled:cursor-not-allowed"
+            class="dlg-btn dlg-btn-primary"
             :disabled="selectedChannelIds.length === 0 || joiningChannels"
             @click="joinSelectedChannels"
           >
-            Join selected
+            {{ joiningChannels ? 'Joining...' : 'Join selected' }}
           </button>
         </div>
       </div>
@@ -482,25 +487,25 @@
 
     <div
       v-if="dmPickerOpen"
-      class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+      class="dlg-overlay z-50"
       @click.self="closeDmPicker"
     >
-      <div class="w-full max-w-md rounded-xl bg-sidebar-bg border border-white/10 shadow-2xl overflow-hidden">
-        <div class="px-4 py-3 border-b border-white/10">
-          <div class="text-white font-semibold text-sm">Start direct message</div>
-          <div class="text-xs text-sidebar-textMuted mt-1">Choose an active user to open a 1:1 DM.</div>
+      <div class="dlg-window" role="dialog" aria-modal="true" aria-label="Start direct message">
+        <div class="dlg-head">
+          <div class="dlg-title">Start direct message</div>
+          <div class="dlg-sub">Choose an active user to open a 1:1 DM.</div>
         </div>
 
-        <div v-if="dmPickerError" class="px-4 py-3 text-sm text-red-300 border-b border-white/10">
+        <div v-if="dmPickerError" class="dlg-note dlg-note-danger">
           {{ dmPickerError }}
         </div>
 
-        <div class="max-h-80 overflow-y-auto">
+        <div class="dlg-list">
           <button
             v-for="candidate in dmCandidates"
             :key="candidate.userId"
             :data-testid="`dm-candidate-${candidate.userId}`"
-            class="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-sidebar-hover transition-colors"
+            class="dlg-row"
             @click="selectDmCandidate(candidate.userId)"
           >
             <UserAvatar
@@ -509,24 +514,25 @@
               :avatar-url="candidate.avatarUrl"
               :custom-status="candidate.customStatus"
               size="sm"
+              class="!h-[34px] !w-[34px]"
             />
-            <div class="min-w-0">
-              <div class="text-sm text-sidebar-text truncate">{{ candidate.displayName }}</div>
+            <div class="min-w-0 flex-1">
+              <div class="dlg-row-name truncate">{{ candidate.displayName }}</div>
             </div>
           </button>
 
-          <div v-if="!dmLoading && dmCandidates.length === 0" class="px-4 py-6 text-sm text-sidebar-textMuted text-center">
+          <div v-if="!dmLoading && dmCandidates.length === 0" class="dlg-empty">
             No available users
           </div>
 
-          <div v-if="dmLoading" class="px-4 py-6 text-sm text-sidebar-textMuted text-center">
+          <div v-if="dmLoading" class="dlg-empty">
             Loading users...
           </div>
         </div>
 
-        <div class="px-4 py-3 border-t border-white/10 flex justify-end">
+        <div class="dlg-foot-end">
           <button
-            class="px-3 py-1.5 rounded text-sm text-sidebar-text hover:bg-sidebar-hover transition-colors"
+            class="dlg-btn dlg-btn-ghost"
             @click="closeDmPicker"
           >
             Close
@@ -549,6 +555,7 @@ import { createOrOpenDm, createOrOpenEncryptedDm, joinChannels, leaveConversatio
 import type { DirectMessageItem } from '@/services/http/chatApi'
 import { loadManualPresencePreference, saveManualPresencePreference } from '@/services/storage/manualPresenceStorage'
 import SidebarItem from './SidebarItem.vue'
+import CallIcon from './CallIcon.vue'
 import NotificationLevelSelector from './NotificationLevelSelector.vue'
 import UserAvatar from './UserAvatar.vue'
 import CallPresenceIcon from './CallPresenceIcon.vue'
@@ -622,12 +629,26 @@ const unreadBadgeLabel = computed(() => (
 const sortedChannels = computed(() =>
   [...chatStore.channels].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
 )
+// Direct messages are ordered by their latest message activity (newest first),
+// independent of read/unread state. Missing timestamps sort last; ties fall
+// back to lastMessageSeq, then name, then id for a stable deterministic order.
 const sortedDirectMessages = computed(() =>
   [...chatStore.directMessages].sort((a, b) => {
-    const aUnread = a.unread > 0
-    const bUnread = b.unread > 0
-    if (aUnread !== bUnread) {
-      return aUnread ? -1 : 1
+    const aTime = a.lastActivityAt ? Date.parse(a.lastActivityAt) : Number.NaN
+    const bTime = b.lastActivityAt ? Date.parse(b.lastActivityAt) : Number.NaN
+    const aHasTime = Number.isFinite(aTime)
+    const bHasTime = Number.isFinite(bTime)
+    if (aHasTime && bHasTime && aTime !== bTime) {
+      return bTime - aTime
+    }
+    if (aHasTime !== bHasTime) {
+      return aHasTime ? -1 : 1
+    }
+
+    const aSeq = typeof a.lastMessageSeq === 'bigint' ? a.lastMessageSeq : 0n
+    const bSeq = typeof b.lastMessageSeq === 'bigint' ? b.lastMessageSeq : 0n
+    if (aSeq !== bSeq) {
+      return aSeq > bSeq ? -1 : 1
     }
 
     const byName = a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' })

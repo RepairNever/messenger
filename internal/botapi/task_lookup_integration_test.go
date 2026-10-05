@@ -107,9 +107,17 @@ func TestIntegration_BotAPI_TasksByVersion(t *testing.T) {
 			assert.Equal(t, newer.PublicID, found[0]["public_id"])
 			assert.Equal(t, older.PublicID, found[1]["public_id"])
 			for _, item := range found {
+				assert.Len(t, item, 5, "lookup keeps its original task DTO fields")
+				assert.NotContains(t, item, "subtasks")
+				assert.NotContains(t, item, "parent_public_id")
 				statusCode, individual := env.do(t, http.MethodGet, "/api/bot/v1/tasks/"+item["public_id"].(string), env.token, nil)
 				require.Equal(t, http.StatusOK, statusCode)
-				assert.Equal(t, individual, item, "lookup DTO must match individual task reads")
+				assert.Equal(t, []any{}, individual["subtasks"], "detail reads include the empty subtask array")
+				assert.NotContains(t, individual, "parent_public_id")
+				assert.Equal(t, map[string]any{
+					"public_id": individual["public_id"], "title": individual["title"],
+					"description": individual["description"], "status": individual["status"], "fields": individual["fields"],
+				}, item, "lookup DTO must preserve the existing detail fields")
 			}
 		})
 	}

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { create } from '@bufbuild/protobuf'
 import { nextTick, watch } from 'vue'
@@ -11,6 +11,7 @@ import {
 } from '@/services/storage/lastConversationStorage'
 import { storage } from '@/services/storage/storageAdapter'
 import { ensureLocalStorageMock } from '@/__tests__/testUtils'
+import * as cacheService from '@/services/db/cache'
 import {
   BootstrapResponseSchema,
   SyncSinceResponseSchema,
@@ -36,6 +37,7 @@ import {
   ThreadSummaryUpdatedEventSchema,
   TaskStatusChangedEventSchema,
   TaskCommentCreatedEventSchema,
+  ConversationUpsertedEventSchema,
   ServerEventSchema,
   PresenceEventSchema,
   PresenceStatus,
@@ -107,7 +109,8 @@ vi.mock('@/services/e2ee/dmE2ee', async (importOriginal) => {
   }
 })
 
-vi.mock('@/composables/useOfflineQueue', () => ({
+vi.mock('@/composables/useOfflineQueue', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/composables/useOfflineQueue')>(),
   useOfflineQueue: () => offlineQueueMocks,
 }))
 
@@ -3514,6 +3517,78 @@ describe('chatStore phase 6 flows', () => {
     expect(ws.sendSubscribeThread).toHaveBeenCalledWith('channel-1', 'root-1', 1n)
   })
 
+  it.each(['select same DM', 'select another DM', 'open same DM', 'open another DM'])(
+    'keeps visible pinned replies read while composing in the main chat after %s',
+    async (navigation) => {
+      const chat = useChatStore()
+      const ws = useWsStore()
+      ws.state = 'LIVE_SYNCED'
+      ws.sendSubscribeThread = vi.fn().mockReturnValue(true)
+      ws.sendUpdateReadCursor = vi.fn()
+      ws.sendMessage = vi.fn().mockReturnValue(true)
+      chat.bootstrapped = true
+      chat.setClientActive(true)
+      useAuthStore().user = { id: 'user-1', email: 'ada@example.com', displayName: 'Ada', role: 'member' }
+      const threadDm = {
+        id: 'dm-thread', userId: 'user-2', displayName: 'Bob', presence: 'online' as const,
+        unread: 0, notificationLevel: NotificationLevel.ALL,
+      }
+      const otherDm = { ...threadDm, id: 'dm-other', userId: 'user-3', displayName: 'Eve' }
+      chat.directMessages = [threadDm, otherDm]
+      chat.messages = {
+        'dm-thread': [buildMessage({ id: 'root-1', channelId: 'dm-thread', channelSeq: 10n })],
+      }
+      chatApiMocks.listConversationMessages.mockResolvedValue({ messages: [], has_more: false, page_size: 50 })
+      chat.activateThreadWorkspace('dm-thread', 'root-1')
+      const mainDm = navigation.includes('another') ? otherDm : threadDm
+      if (navigation.startsWith('select')) {
+        await chat.selectChannel(mainDm.id)
+      } else {
+        chat.openDirectMessage(mainDm)
+      }
+      chat.sendMessageToConversation(mainDm.id, 'message in the main DM')
+      await nextTick()
+
+      chat.handleServerEvent(create(ServerEventSchema, {
+        eventSeq: 1n, eventId: 'visible-pinned-reply',
+        payload: { case: 'messageCreated', value: create(MessageEventSchema, {
+          conversationId: 'dm-thread', messageId: 'reply-1', senderId: 'user-2', body: 'visible reply',
+          channelSeq: 11n, threadRootMessageId: 'root-1', threadSeq: 1n,
+        }) },
+      }))
+      chat.handleServerEvent(create(ServerEventSchema, {
+        payload: { case: 'notificationAdded', value: create(NotificationAddedEventSchema, {
+          notification: create(NotificationSummarySchema, {
+            notificationId: 'visible-notification', type: NotificationType.THREAD_REPLY,
+            conversationId: 'dm-thread', messageId: 'reply-1', threadRootMessageId: 'root-1',
+          }),
+        }) },
+      }))
+      chatApiMocks.listUnreadFeed.mockResolvedValue({
+        total_count: 2,
+        items: ['root-1', 'root-2'].map((rootId, index) => ({
+          id: `thread:reply-${index + 1}`, kind: 'thread',
+          notification_id: index === 0 ? 'visible-notification' : 'hidden-notification',
+          conversation_id: 'dm-thread', conversation_kind: 'dm', conversation_title: 'Bob',
+          message_id: `reply-${index + 1}`, thread_root_message_id: rootId,
+          sender_id: 'user-2', sender_name: 'Bob', body: 'reply', created_at: '2026-03-06T00:01:00Z',
+        })),
+      })
+      await chat.refreshUnreadFeed()
+
+      expect(chat.activeChannelId).toBe(mainDm.id)
+      expect(chat.activeThreadConversationId).toBe('dm-thread')
+      expect(chat.activeThreadRootId).toBe('root-1')
+      expect(chat.getThreadReplies('root-1').map(message => message.id)).toEqual(['reply-1'])
+      expect(chat.unreadFeedItems.map(item => item.id)).toEqual(['thread:reply-2'])
+      expect(chat.totalUnreadCount).toBe(1)
+      expect(chatApiMocks.resolveUnreadFeedNotification).toHaveBeenCalledWith('visible-notification')
+      expect(chatApiMocks.resolveUnreadFeedNotification).not.toHaveBeenCalledWith('hidden-notification')
+      expect(ws.sendSubscribeThread).toHaveBeenCalledWith('dm-thread', 'root-1', 1n)
+      chat.resetRuntimeState()
+    },
+  )
+
   it('keeps live replies unread when they arrive in an inactive pinned thread', () => {
     const chat = useChatStore()
     const ws = useWsStore()
@@ -5649,5 +5724,401 @@ describe('chatStore task comment events', () => {
     chat.handleServerEvent(event(3n))
     expect(receive).toHaveBeenCalledTimes(2)
     chat.resetRuntimeState()
+  })
+})
+
+describe('chatStore DM sidebar activity ordering', () => {
+  beforeEach(() => {
+    ensureLocalStorageMock()
+    setActivePinia(createPinia())
+    localStorage.clear()
+    storage.clear()
+    chatApiMocks.listConversationMessages.mockReset()
+    chatApiMocks.listDmCandidates.mockReset()
+    chatApiMocks.listUnreadFeed.mockReset()
+    chatApiMocks.listSavedMessages.mockReset()
+    chatApiMocks.forwardMessage.mockReset()
+    chatApiMocks.clearDMConversationHistory.mockReset()
+    chatApiMocks.saveMessage.mockReset()
+    chatApiMocks.unsaveMessage.mockReset()
+    chatApiMocks.getMessageContext.mockReset()
+    chatApiMocks.resolveUnreadFeedNotification.mockReset()
+    avatarCacheMocks.invalidateUserAvatar.mockReset()
+    e2eeMocks.decryptDMMessage.mockReset()
+    offlineQueueMocks.enqueue.mockReset()
+    offlineQueueMocks.claimInFlight.mockReset()
+    offlineQueueMocks.releaseInFlight.mockReset()
+    offlineQueueMocks.releaseAllInFlight.mockReset()
+    offlineQueueMocks.remove.mockReset()
+    offlineQueueMocks.enqueue.mockResolvedValue(true)
+    offlineQueueMocks.claimInFlight.mockReturnValue(true)
+    chatApiMocks.listConversationMessages.mockResolvedValue({ messages: [], has_more: false, page_size: 50 })
+    chatApiMocks.listUnreadFeed.mockResolvedValue({ total_count: 0, items: [] })
+    chatApiMocks.listDmCandidates.mockResolvedValue([])
+  })
+
+  afterEach(() => {
+    useChatStore().resetRuntimeState()
+    vi.restoreAllMocks()
+  })
+
+  function buildDm(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'dm-1',
+      userId: 'user-2',
+      displayName: 'Bob',
+      presence: 'offline' as const,
+      unread: 0,
+      lastMessageSeq: 0n,
+      notificationLevel: NotificationLevel.ALL,
+      ...overrides,
+    }
+  }
+
+  function activityEvent(eventSeq: bigint, createdAt?: { seconds: bigint; nanos: number }, channelSeq = eventSeq) {
+    return create(ServerEventSchema, {
+      eventSeq,
+      eventId: `dm-activity-${eventSeq}`,
+      eventType: EventType.MESSAGE_CREATED,
+      conversationId: 'dm-1',
+      payload: {
+        case: 'messageCreated',
+        value: create(MessageEventSchema, {
+          conversationId: 'dm-1',
+          messageId: `dm-message-${channelSeq}`,
+          senderId: 'user-2',
+          body: 'activity',
+          channelSeq,
+          createdAt,
+        }),
+      },
+    })
+  }
+
+  it('maps lastActivityAt from bootstrap conversation summaries for DMs', () => {
+    const chat = useChatStore()
+
+    chat.handleBootstrapResponse(create(BootstrapResponseSchema, {
+      snapshotSeq: 1n,
+      conversations: [create(ConversationSummarySchema, {
+        conversationId: 'dm-1',
+        conversationType: 1,
+        title: 'Bob',
+        topic: 'user-2',
+        isArchived: false,
+        notificationLevel: NotificationLevel.ALL,
+        lastMessageSeq: 4n,
+        lastMessagePreview: '',
+        memberCount: 2,
+        presence: PresenceStatus.OFFLINE,
+        lastActivityAt: { seconds: 1767225600n, nanos: 0 },
+      })],
+      unread: [],
+      activeCalls: [],
+      pendingInvites: [],
+      notifications: [],
+      hasMore: false,
+      nextPageToken: '',
+      bootstrapSessionId: 'session-dm-order',
+      pageIndex: 0,
+      pageSizeEffective: 1,
+      estimatedTotalConversations: 1,
+      presence: [],
+    }))
+
+    expect(chat.directMessages[0].lastActivityAt).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('maps lastActivityAt from conversationUpserted events for DMs', () => {
+    const chat = useChatStore()
+    chat.directMessages = [buildDm()]
+
+    chat.handleServerEvent(create(ServerEventSchema, {
+      eventSeq: 0n,
+      eventId: 'evt-upsert-1',
+      eventType: EventType.CONVERSATION_UPSERTED,
+      conversationId: 'dm-1',
+      payload: {
+        case: 'conversationUpserted',
+        value: create(ConversationUpsertedEventSchema, {
+          conversation: create(ConversationSummarySchema, {
+            conversationId: 'dm-1',
+            conversationType: 1,
+            title: 'Bob',
+            topic: 'user-2',
+            isArchived: false,
+            notificationLevel: NotificationLevel.ALL,
+            lastMessageSeq: 4n,
+            lastMessagePreview: '',
+            memberCount: 2,
+            presence: PresenceStatus.OFFLINE,
+            lastActivityAt: { seconds: 1767225600n, nanos: 0 },
+          }),
+        }),
+      },
+    }))
+
+    expect(chat.directMessages[0].lastActivityAt).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('bumps DM lastActivityAt when an incoming message arrives', () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.state = 'LIVE_SYNCED'
+    chat.bootstrapped = true
+    chat.lastAppliedEventSeq = 5n
+    chat.directMessages = [buildDm({ lastActivityAt: '2026-01-01T00:00:00.000Z' })]
+
+    chat.handleServerEvent(create(ServerEventSchema, {
+      eventSeq: 7n,
+      eventId: 'evt-dm-7',
+      eventType: EventType.MESSAGE_CREATED,
+      conversationId: 'dm-1',
+      payload: {
+        case: 'messageCreated',
+        value: create(MessageEventSchema, {
+          conversationId: 'dm-1',
+          messageId: 'message-7',
+          senderId: 'user-2',
+          body: 'newest',
+          channelSeq: 7n,
+          threadRootMessageId: '',
+          threadSeq: 0n,
+          mentionedUserIds: [],
+          mentionEveryone: false,
+          createdAt: { seconds: 1767312000n, nanos: 0 },
+        }),
+      },
+    }))
+
+    expect(chat.directMessages[0].lastActivityAt).toBe('2026-01-02T00:00:00.000Z')
+  })
+
+  it('bumps DM lastActivityAt when a thread reply arrives', () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.state = 'LIVE_SYNCED'
+    chat.bootstrapped = true
+    chat.lastAppliedEventSeq = 5n
+    chat.directMessages = [buildDm({ lastActivityAt: '2026-01-01T00:00:00.000Z' })]
+
+    chat.handleServerEvent(create(ServerEventSchema, {
+      eventSeq: 7n,
+      eventId: 'evt-dm-thread-7',
+      eventType: EventType.MESSAGE_CREATED,
+      conversationId: 'dm-1',
+      payload: {
+        case: 'messageCreated',
+        value: create(MessageEventSchema, {
+          conversationId: 'dm-1',
+          messageId: 'reply-7',
+          senderId: 'user-2',
+          body: 'thread reply',
+          channelSeq: 7n,
+          threadRootMessageId: 'root-1',
+          threadSeq: 1n,
+          mentionedUserIds: [],
+          mentionEveryone: false,
+          createdAt: { seconds: 1767312000n, nanos: 0 },
+        }),
+      },
+    }))
+
+    expect(chat.directMessages[0].lastActivityAt).toBe('2026-01-02T00:00:00.000Z')
+  })
+
+  it('ignores message events older than the known DM activity', () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.state = 'LIVE_SYNCED'
+    chat.bootstrapped = true
+    chat.lastAppliedEventSeq = 5n
+    chat.directMessages = [buildDm({ lastActivityAt: '2026-01-02T00:00:00.000Z' })]
+
+    chat.handleServerEvent(create(ServerEventSchema, {
+      eventSeq: 7n,
+      eventId: 'evt-dm-old-7',
+      eventType: EventType.MESSAGE_CREATED,
+      conversationId: 'dm-1',
+      payload: {
+        case: 'messageCreated',
+        value: create(MessageEventSchema, {
+          conversationId: 'dm-1',
+          messageId: 'message-old-7',
+          senderId: 'user-2',
+          body: 'replayed older message',
+          channelSeq: 7n,
+          threadRootMessageId: '',
+          threadSeq: 0n,
+          mentionedUserIds: [],
+          mentionEveryone: false,
+          createdAt: { seconds: 1767225600n, nanos: 0 },
+        }),
+      },
+    }))
+
+    expect(chat.directMessages[0].lastActivityAt).toBe('2026-01-02T00:00:00.000Z')
+  })
+
+  it('bumps DM lastActivityAt optimistically when sending a message', () => {
+    const chat = useChatStore()
+    const authStore = useAuthStore()
+    const ws = useWsStore()
+    ws.state = 'LIVE_SYNCED'
+    authStore.user = {
+      id: 'user-1',
+      email: 'ada@example.com',
+      displayName: 'Ada',
+      role: 'member',
+    }
+    chat.directMessages = [buildDm({ lastActivityAt: '2026-01-01T00:00:00.000Z' })]
+    chat.messages = { 'dm-1': [] }
+
+    chat.sendMessageToConversation('dm-1', 'sent from self')
+
+    expect(chat.directMessages[0].lastActivityAt).toBeDefined()
+    expect(chat.directMessages[0].lastActivityAt! > '2026-01-02T00:00:00.000Z').toBe(true)
+  })
+
+  it('keeps the known DM activity when opening a DM without activity data', () => {
+    const chat = useChatStore()
+    chatApiMocks.listConversationMessages.mockResolvedValue({
+      messages: [],
+      has_more: false,
+      page_size: 50,
+      next_before_channel_seq: '',
+    })
+    chat.directMessages = [buildDm({ unread: 3, lastActivityAt: '2026-01-01T00:00:00.000Z' })]
+
+    chat.openDirectMessage(buildDm({ unread: 0 }))
+
+    expect(chat.directMessages[0].lastActivityAt).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it.each(['plaintext', 'dm_pairwise_signal_v1'] as const)('bumps activity through the main composer %s send path', (contentMode) => {
+    const chat = useChatStore()
+    chat.directMessages = [buildDm({ lastActivityAt: '2026-01-01T00:00:00.000Z' })]
+    chat.addOptimisticMessage(buildMessage({
+      channelId: 'dm-1',
+      createdAt: '2026-01-02T00:00:00.250Z',
+      contentMode,
+      sendStatus: 'sending',
+    }))
+    expect(chat.directMessages[0].lastActivityAt).toBe('2026-01-02T00:00:00.250Z')
+  })
+
+  it('updates confirmed activity on ACK even when the echo is already in the timeline', () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.state = 'LIVE_SYNCED'
+    chat.bootstrapped = true
+    chat.directMessages = [buildDm({ lastActivityAt: '2026-01-01T00:00:00.000Z' })]
+    chat.handleSendMessageAck(create(SendMessageAckSchema, {
+      conversationId: 'dm-1',
+      messageId: 'dm-message-7',
+      channelSeq: 7n,
+      clientMsgId: 'client-7',
+      createdAt: { seconds: 1767312000n, nanos: 250_000_000 },
+    }))
+    chat.messages['dm-1'] = [buildMessage({ id: 'dm-message-7', channelId: 'dm-1' })]
+    chat.handleServerEvent(activityEvent(7n, { seconds: 1767312000n, nanos: 250_000_000 }))
+    expect(chat.directMessages[0].lastActivityAt).toBe('2026-01-02T00:00:00.250Z')
+    expect(chat.directMessages[0].lastMessageSeq).toBe(7n)
+    expect(chat.messages['dm-1']).toHaveLength(1)
+  })
+
+  it('keeps the newest activity and sequence across rapid, duplicate, older and timestamp-less events', () => {
+    const chat = useChatStore()
+    useWsStore().state = 'LIVE_SYNCED'
+    chat.bootstrapped = true
+    chat.directMessages = [buildDm({ lastActivityAt: '2026-01-01T00:00:00Z' })]
+    chat.handleServerEvent(activityEvent(1n, { seconds: 1767225600n, nanos: 250_000_000 }))
+    const latest = activityEvent(2n, { seconds: 1767225600n, nanos: 750_000_000 }, 8n)
+    chat.handleServerEvent(latest)
+    chat.handleServerEvent(latest)
+    chat.handleServerEvent(activityEvent(3n, { seconds: 1767225600n, nanos: 100_000_000 }, 2n))
+    chat.handleServerEvent(activityEvent(4n, undefined, 3n))
+    expect(chat.directMessages[0].lastActivityAt).toBe('2026-01-01T00:00:00.750Z')
+    expect(chat.directMessages[0].lastMessageSeq).toBe(8n)
+    expect(chat.messages['dm-1']).toHaveLength(4)
+  })
+
+  it('recovers activity when the existing timestamp is invalid', () => {
+    const chat = useChatStore()
+    useWsStore().state = 'LIVE_SYNCED'
+    chat.bootstrapped = true
+    chat.directMessages = [buildDm({ lastActivityAt: 'invalid' })]
+    chat.handleServerEvent(activityEvent(1n, { seconds: 1767225600n, nanos: 0 }))
+    expect(chat.directMessages[0].lastActivityAt).toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('does not regress activity or sequence when an older conversation summary arrives', () => {
+    const chat = useChatStore()
+    chat.directMessages = [buildDm({ lastActivityAt: '2026-01-02T00:00:00.750Z', lastMessageSeq: 8n })]
+    chat.handleServerEvent(create(ServerEventSchema, {
+      payload: {
+        case: 'conversationUpserted',
+        value: create(ConversationUpsertedEventSchema, {
+          conversation: create(ConversationSummarySchema, {
+            conversationId: 'dm-1', conversationType: 1, topic: 'user-2', title: 'Bob',
+            lastMessageSeq: 2n, lastActivityAt: { seconds: 1767225600n, nanos: 0 },
+          }),
+        }),
+      },
+    }))
+    expect(chat.directMessages[0].lastActivityAt).toBe('2026-01-02T00:00:00.750Z')
+    expect(chat.directMessages[0].lastMessageSeq).toBe(8n)
+  })
+
+  it('ignores creation-time activity on empty DMs during bootstrap', () => {
+    const chat = useChatStore()
+    chat.handleBootstrapResponse(create(BootstrapResponseSchema, {
+      snapshotSeq: 1n, bootstrapSessionId: 'empty-dm-session',
+      conversations: [create(ConversationSummarySchema, {
+        conversationId: 'dm-1', conversationType: 1, topic: 'user-2', title: 'Bob',
+        lastMessageSeq: 0n, lastActivityAt: { seconds: 1767312000n, nanos: 0 },
+      })],
+    }))
+    expect(chat.directMessages[0].lastActivityAt).toBeUndefined()
+  })
+
+  it('persists live activity and restores it into a fresh store', async () => {
+    const chat = useChatStore()
+    useWsStore().state = 'LIVE_SYNCED'
+    chat.bootstrapped = true
+    chat.directMessages = [buildDm()]
+    const persist = vi.spyOn(cacheService, 'cacheConversations').mockResolvedValue()
+    chat.handleServerEvent(activityEvent(1n, { seconds: 1767312000n, nanos: 750_000_000 }))
+    expect(persist).toHaveBeenCalledTimes(1)
+    const persistedDms = persist.mock.calls[0][1].map(dm => ({ ...dm }))
+    vi.spyOn(cacheService, 'loadCachedConversations').mockResolvedValue({ channels: [], dms: persistedDms })
+    vi.spyOn(cacheService, 'loadCachedMessages').mockResolvedValue([])
+    chat.resetRuntimeState()
+    setActivePinia(createPinia())
+    const restored = useChatStore()
+    expect(await restored.loadCachedState()).toBe(true)
+    expect(restored.directMessages[0].lastActivityAt).toBe('2026-01-02T00:00:00.750Z')
+    expect(restored.directMessages[0].lastMessageSeq).toBe(1n)
+  })
+
+  it('advances activity during offline replay and leaves it unchanged by read updates', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.state = 'RECOVERING_GAP'
+    ws.sendSyncSince = vi.fn()
+    chat.bootstrapped = true
+    chat.directMessages = [buildDm({ unread: 3, lastActivityAt: '2026-01-01T00:00:00.000Z' })]
+    chat.handleSyncSinceResponse(create(SyncSinceResponseSchema, {
+      events: [activityEvent(1n, { seconds: 1767312000n, nanos: 750_000_000 })],
+      syncCursor: 1n,
+    }))
+    await Promise.resolve()
+    chat.handleServerEvent(create(ServerEventSchema, {
+      payload: { case: 'readCounterUpdated', value: create(ReadCounterUpdatedEventSchema, {
+        counter: create(UnreadCounterSchema, { conversationId: 'dm-1', unreadMessages: 0 }),
+      }) },
+    }))
+    expect(chat.directMessages[0].lastActivityAt).toBe('2026-01-02T00:00:00.750Z')
+    expect(chat.directMessages[0].unread).toBe(0)
   })
 })

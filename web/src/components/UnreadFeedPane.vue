@@ -1,13 +1,13 @@
 <template>
   <section class="flex h-full min-h-0 flex-col bg-chat-bg">
-    <header class="flex items-center justify-between border-b border-chat-border bg-chat-header px-4 py-3">
+    <header class="flex h-14 shrink-0 items-center justify-between border-b border-chat-border bg-chat-header px-4">
       <div>
-        <h1 class="text-sm font-semibold text-white">Unread</h1>
-        <p class="mt-1 text-xs text-gray-400">All unread messages, mentions, and thread replies.</p>
+        <h1 class="text-sm font-semibold text-app-text">Unread</h1>
+        <p class="mt-1 text-xs text-app-muted">All unread messages, mentions, and thread replies.</p>
       </div>
       <button
         type="button"
-        class="rounded border border-chat-border px-2.5 py-1 text-xs text-gray-300 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"
+        class="rounded border border-chat-border px-2.5 py-1 text-xs text-app-secondaryText transition-colors hover:bg-app-hover hover:text-app-text disabled:opacity-50"
         :disabled="chatStore.unreadFeedLoading"
         @click="chatStore.refreshUnreadFeed()"
       >
@@ -16,7 +16,7 @@
     </header>
 
     <div class="min-h-0 flex-1 overflow-y-auto">
-      <div v-if="chatStore.unreadFeedLoading && chatStore.unreadFeedItems.length === 0" class="px-4 py-6 text-sm text-gray-400">
+      <div v-if="chatStore.unreadFeedLoading && chatStore.unreadFeedItems.length === 0" class="px-4 py-6 text-sm text-app-muted">
         Loading unread items...
       </div>
 
@@ -24,7 +24,7 @@
         {{ chatStore.unreadFeedError }}
       </div>
 
-      <div v-else-if="chatStore.unreadFeedItems.length === 0" class="px-4 py-8 text-center text-sm text-gray-500">
+      <div v-else-if="chatStore.unreadFeedItems.length === 0" class="px-4 py-8 text-center text-sm text-app-muted">
         No unread events.
       </div>
 
@@ -33,7 +33,7 @@
           v-for="item in chatStore.unreadFeedItems"
           :key="item.id"
           type="button"
-          class="block w-full px-4 py-3 text-left transition-colors hover:bg-white/5"
+          class="block w-full px-4 py-3 text-left transition-colors hover:bg-app-hover"
           @click="$emit('open-item', item)"
         >
           <div class="flex items-start gap-3">
@@ -44,14 +44,14 @@
               {{ itemKindLabel(item.kind) }}
             </span>
             <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2 text-xs text-gray-400">
+              <div class="flex items-center gap-2 text-xs text-app-muted">
                 <span class="truncate">{{ conversationLabel(item) }}</span>
                 <span class="shrink-0">{{ formatTimestamp(item.createdAt) }}</span>
               </div>
-              <div class="mt-1 truncate text-sm font-medium text-white">
+              <div class="mt-1 truncate text-sm font-medium text-app-text">
                 {{ item.senderName || item.conversationTitle }}
               </div>
-              <div class="mt-1 line-clamp-2 text-sm text-gray-300">
+              <div class="mt-1 line-clamp-2 text-sm text-app-secondaryText">
                 {{ item.body || emptyBodyLabel(item.kind) }}
               </div>
             </div>

@@ -297,6 +297,17 @@ func TestHandler_GetTaskByPublicID(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode raw response: %v", err)
+	}
+	if raw, exists := payload["subtasks"]; !exists || string(raw) != "[]" {
+		t.Fatalf("expected present, empty subtasks array, got %s", rec.Body.String())
+	}
+	if _, exists := payload["parent_public_id"]; exists {
+		t.Fatalf("expected top-level task to omit parent_public_id, got %s", rec.Body.String())
+	}
+
 	var resp integrationTaskResponseDTO
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -313,6 +324,120 @@ func TestHandler_GetTaskByPublicID(t *testing.T) {
 	}
 	if resp.Fields[0].Code != "summary" || resp.Fields[0].ValueText == nil || *resp.Fields[0].ValueText != "Field value" {
 		t.Fatalf("expected field metadata and value to map, got %+v", resp.Fields[0])
+	}
+}
+
+func TestHandler_GetTaskByPublicID_Subtasks(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+	mux := newMux(pool)
+	taskSvc := tasks.NewService(pool, nil)
+
+	actorID := seedUser(t, ctx, pool, "admin", "active")
+	botID := seedUser(t, ctx, pool, "bot", "active")
+	seedToken(t, ctx, pool, botID, "subtask-token", false)
+	template := seedTemplateRow(t, ctx, taskSvc, actorID, "INTS")
+	open := seedStatusRow(t, ctx, taskSvc, actorID, "open", "Open")
+	done := seedStatusRow(t, ctx, taskSvc, actorID, "done", "Done")
+
+	createTask := func(title string, statusID uuid.UUID, parentID *uuid.UUID) tasks.TaskResponse {
+		t.Helper()
+		row, err := taskSvc.CreateTask(ctx, tasks.CreateTaskParams{
+			TemplateID:   template.ID,
+			ParentTaskID: parentID,
+			Title:        title,
+			StatusID:     statusID,
+			ActorID:      actorID,
+		})
+		if err != nil {
+			t.Fatalf("create task %q: %v", title, err)
+		}
+		return row
+	}
+	parent := createTask("Parent task", open.ID, nil)
+	later := createTask("Open later child", open.ID, &parent.ID)
+	earlier := createTask("Completed earlier child", done.ID, &parent.ID)
+	base := time.Date(2026, 10, 5, 10, 0, 0, 0, time.UTC)
+	for _, child := range []struct {
+		id        uuid.UUID
+		createdAt time.Time
+	}{
+		{later.ID, base.Add(time.Hour)},
+		{earlier.ID, base},
+	} {
+		if _, err := pool.Exec(ctx, `UPDATE task SET created_at = $2 WHERE id = $1`, child.id, child.createdAt); err != nil {
+			t.Fatalf("set child created_at: %v", err)
+		}
+	}
+
+	getTask := func(t *testing.T, publicID string) map[string]json.RawMessage {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/integrations/tasks/"+publicID, nil)
+		req.Header.Set("Authorization", "Bearer subtask-token")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 for %q, got %d: %s", publicID, rec.Code, rec.Body.String())
+		}
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return payload
+	}
+
+	t.Run("parent returns pointers in created_at order including completed child", func(t *testing.T) {
+		payload := getTask(t, parent.PublicID)
+		if _, exists := payload["parent_public_id"]; exists {
+			t.Fatalf("expected parent task to omit parent_public_id, got %s", payload["parent_public_id"])
+		}
+		raw, exists := payload["subtasks"]
+		if !exists || string(raw) == "null" {
+			t.Fatalf("expected present subtasks array, got %s", raw)
+		}
+		var subtasks []map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &subtasks); err != nil {
+			t.Fatalf("decode subtasks: %v", err)
+		}
+		if len(subtasks) != 2 {
+			t.Fatalf("expected two subtasks, got %s", raw)
+		}
+		for i, expected := range []tasks.TaskResponse{earlier, later} {
+			item := subtasks[i]
+			if len(item) != 2 || item["public_id"] == nil || item["title"] == nil {
+				t.Fatalf("expected exactly public_id and title on subtask %d, got %+v", i, item)
+			}
+			var publicID, title string
+			if err := json.Unmarshal(item["public_id"], &publicID); err != nil {
+				t.Fatalf("decode subtask public_id: %v", err)
+			}
+			if err := json.Unmarshal(item["title"], &title); err != nil {
+				t.Fatalf("decode subtask title: %v", err)
+			}
+			if publicID != expected.PublicID || title != expected.Title {
+				t.Fatalf("expected subtask %d to be %q (%q), got %q (%q)", i, expected.PublicID, expected.Title, publicID, title)
+			}
+		}
+	})
+
+	for _, child := range []tasks.TaskResponse{earlier, later} {
+		t.Run("subtask "+child.PublicID+" resolves with parent pointer", func(t *testing.T) {
+			payload := getTask(t, child.PublicID)
+			if raw, exists := payload["subtasks"]; !exists || string(raw) != "[]" {
+				t.Fatalf("expected present, empty subtasks array, got %s", raw)
+			}
+			raw, exists := payload["parent_public_id"]
+			if !exists {
+				t.Fatal("expected subtask to include parent_public_id")
+			}
+			var parentPublicID string
+			if err := json.Unmarshal(raw, &parentPublicID); err != nil {
+				t.Fatalf("decode parent_public_id: %v", err)
+			}
+			if parentPublicID != parent.PublicID {
+				t.Fatalf("expected parent_public_id %q, got %q", parent.PublicID, parentPublicID)
+			}
+		})
 	}
 }
 
@@ -412,6 +537,15 @@ func TestHandler_FindTasksByEnumValue_SingleEnumByCode(t *testing.T) {
 		EnumDictionaryID:  &dict.ID,
 		EnumVersion:       &enumVersion,
 	}})
+	if _, err := taskSvc.CreateTask(ctx, tasks.CreateTaskParams{
+		TemplateID:   template.ID,
+		ParentTaskID: &match.ID,
+		Title:        "Lookup match child",
+		StatusID:     status.ID,
+		ActorID:      actorID,
+	}); err != nil {
+		t.Fatalf("create lookup match child: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/integrations/tasks/by-enum/priority/value/high", nil)
 	req.Header.Set("Authorization", "Bearer enum-token")
@@ -420,6 +554,22 @@ func TestHandler_FindTasksByEnumValue_SingleEnumByCode(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload []map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode raw lookup response: %v", err)
+	}
+	if len(payload) != 1 {
+		t.Fatalf("expected one lookup task, got %s", rec.Body.String())
+	}
+	if len(payload[0]) != 5 {
+		t.Fatalf("expected lookup to preserve its original five keys, got %s", rec.Body.String())
+	}
+	for _, key := range []string{"public_id", "title", "description", "status", "fields"} {
+		if _, exists := payload[0][key]; !exists {
+			t.Fatalf("expected lookup key %q, got %s", key, rec.Body.String())
+		}
 	}
 
 	var resp []integrationTaskResponseDTO

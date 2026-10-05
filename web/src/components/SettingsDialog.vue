@@ -2,7 +2,7 @@
   <Teleport to="body">
     <div
       v-if="open"
-      class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+      class="dlg-overlay z-50"
       role="dialog"
       aria-modal="true"
       aria-labelledby="settings-dialog-title"
@@ -11,14 +11,14 @@
     >
       <div
         ref="panelRef"
-        class="w-full max-w-lg rounded-xl border border-chat-border bg-[#1a1d21] shadow-2xl flex flex-col max-h-[90vh]"
+        class="dlg-window max-w-lg max-h-[90vh]"
         tabindex="-1"
       >
         <!-- ── Header ──────────────────────────────────────────────── -->
-        <div class="flex items-center justify-between px-6 py-4 border-b border-chat-border shrink-0">
-          <h2 id="settings-dialog-title" class="text-base font-semibold text-white">Settings</h2>
+        <div class="dlg-head flex items-center justify-between border-b border-app-divider px-6 py-4 shrink-0">
+          <h2 id="settings-dialog-title" class="dlg-title text-base">Settings</h2>
           <button
-            class="text-gray-400 hover:text-white transition-colors rounded p-1 focus:outline-none focus:ring-2 focus:ring-accent"
+            class="text-app-muted hover:text-app-text transition-colors rounded p-1 focus:outline-none focus:ring-2 focus:ring-accent"
             aria-label="Close settings"
             @click="handleClose"
           >
@@ -31,7 +31,7 @@
         <!-- ── Body ───────────────────────────────────────────────── -->
         <div class="overflow-y-auto flex-1 px-6 py-5 space-y-6">
           <section aria-labelledby="audio-section-heading">
-            <h3 id="audio-section-heading" class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Audio</h3>
+            <h3 id="audio-section-heading" class="text-xs font-semibold text-app-muted uppercase tracking-wider mb-4">Audio</h3>
 
             <!-- Permission denied -->
             <div
@@ -67,10 +67,10 @@
             <div class="flex items-start gap-4 mb-6">
               <!-- Left label -->
               <div class="w-28 shrink-0 pt-2.5">
-                <label for="input-device-select" class="text-sm font-medium text-white block leading-tight">
+                <label for="input-device-select" class="text-sm font-medium text-app-text block leading-tight">
                   Input Device
                 </label>
-                <p class="text-[11px] text-gray-500 mt-1 leading-snug">
+                <p class="text-[11px] text-app-muted mt-1 leading-snug">
                   Choose which microphone the agent uses for voice input.
                 </p>
               </div>
@@ -83,14 +83,14 @@
                     id="input-device-select"
                     v-model="selectedInputId"
                     :disabled="permissionState === 'denied'"
-                    class="w-full appearance-none bg-[#222529] border border-chat-border rounded-md px-3 py-2 pr-8 text-sm text-white focus:outline-none focus:border-accent disabled:opacity-40 disabled:cursor-not-allowed transition-colors hover:border-white/30"
+                    class="dlg-input appearance-none pr-8 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <option value="">System Default Microphone</option>
                     <option v-for="d in inputDevices" :key="d.deviceId" :value="d.deviceId">
                       {{ d.label || `Microphone (${d.deviceId.slice(0, 8)}…)` }}
                     </option>
                   </select>
-                  <svg class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                  <svg class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-app-muted" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M6 9l6 6 6-6"/>
                   </svg>
                 </div>
@@ -108,7 +108,7 @@
                   class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
                   :class="isTesting
                     ? 'bg-red-500/15 hover:bg-red-500/25 text-red-300 border-red-500/40'
-                    : 'bg-white/8 hover:bg-white/15 text-gray-300 border-white/12'"
+                    : 'bg-app-input hover:bg-app-hover text-app-secondaryText border-app-divider'"
                   :disabled="permissionState === 'denied'"
                   :aria-pressed="isTesting"
                   @click="handleToggleMicTest"
@@ -129,7 +129,7 @@
                 <div v-if="isTesting" aria-label="Microphone level" class="space-y-1 pt-0.5">
                   <div class="flex items-center gap-2">
                     <div
-                      class="flex-1 h-2 rounded-full bg-white/10 overflow-hidden"
+                      class="flex-1 h-2 rounded-full bg-app-divider overflow-hidden"
                       role="meter"
                       :aria-valuenow="inputLevel"
                       aria-valuemin="0"
@@ -142,9 +142,9 @@
                         :style="{ width: `${inputLevel}%` }"
                       />
                     </div>
-                    <span class="text-[11px] text-gray-400 w-8 text-right tabular-nums shrink-0">{{ inputLevel }}%</span>
+                    <span class="text-[11px] text-app-muted w-8 text-right tabular-nums shrink-0">{{ inputLevel }}%</span>
                   </div>
-                  <p class="text-[11px] text-gray-500">
+                  <p class="text-[11px] text-app-muted">
                     {{ inputLevel === 0 ? 'No input detected.' : 'Speak to see your input level.' }}
                   </p>
                 </div>
@@ -155,16 +155,16 @@
             </div>
 
             <!-- ── Divider ─────────────────────────────────────────── -->
-            <div class="border-t border-white/5 mb-6" aria-hidden="true"/>
+            <div class="border-t border-app-divider mb-6" aria-hidden="true"/>
 
             <!-- ── Output Device row ──────────────────────────────── -->
             <div class="flex items-start gap-4 mb-6">
               <!-- Left label -->
               <div class="w-28 shrink-0 pt-2.5">
-                <label for="output-device-select" class="text-sm font-medium text-white block leading-tight">
+                <label for="output-device-select" class="text-sm font-medium text-app-text block leading-tight">
                   Output Device
                 </label>
-                <p class="text-[11px] text-gray-500 mt-1 leading-snug">
+                <p class="text-[11px] text-app-muted mt-1 leading-snug">
                   Choose where audio responses are played.
                 </p>
               </div>
@@ -177,14 +177,14 @@
                     id="output-device-select"
                     v-model="selectedOutputId"
                     :disabled="!outputSupported"
-                    class="w-full appearance-none bg-[#222529] border border-chat-border rounded-md px-3 py-2 pr-8 text-sm text-white focus:outline-none focus:border-accent disabled:opacity-40 disabled:cursor-not-allowed transition-colors hover:border-white/30"
+                    class="dlg-input appearance-none pr-8 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <option value="">System Default</option>
                     <option v-for="d in outputDevices" :key="d.deviceId" :value="d.deviceId">
                       {{ d.label || `Speaker (${d.deviceId.slice(0, 8)}…)` }}
                     </option>
                   </select>
-                  <svg class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                  <svg class="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-app-muted" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M6 9l6 6 6-6"/>
                   </svg>
                 </div>
@@ -206,8 +206,8 @@
                 <button
                   class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
                   :class="isTestingOutput
-                    ? 'bg-accent/15 text-accent border-accent/30'
-                    : 'bg-white/8 hover:bg-white/15 text-gray-300 border-white/12'"
+                    ? 'bg-accent/15 text-accent-text border-accent/30'
+                    : 'bg-app-input hover:bg-app-hover text-app-secondaryText border-app-divider'"
                   :disabled="isTestingOutput"
                   @click="handleTestOutput"
                 >
@@ -225,10 +225,10 @@
             </div>
 
             <!-- ── Advanced audio settings ────────────────────────── -->
-            <div class="border-t border-white/5 pt-4">
+            <div class="border-t border-app-divider pt-4">
               <details class="group">
                 <summary
-                  class="flex items-center gap-2 cursor-pointer text-sm text-gray-400 hover:text-gray-200 transition-colors list-none rounded select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  class="flex items-center gap-2 cursor-pointer text-sm text-app-muted hover:text-app-text transition-colors list-none rounded select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                   tabindex="0"
                 >
                   <svg
@@ -247,17 +247,17 @@
                 <div class="mt-4 space-y-1">
 
                   <!-- Noise Suppression -->
-                  <div class="flex items-center justify-between gap-4 px-1 py-2.5 rounded-lg hover:bg-white/4 transition-colors">
+                  <div class="flex items-center justify-between gap-4 px-1 py-2.5 rounded-lg hover:bg-app-hover transition-colors">
                     <div class="min-w-0">
-                      <p class="text-sm text-white leading-tight">Noise Suppression</p>
-                      <p class="text-[11px] text-gray-500 mt-0.5 leading-snug">Reduces background noise picked up by the microphone.</p>
+                      <p class="text-sm text-app-text leading-tight">Noise Suppression</p>
+                      <p class="text-[11px] text-app-muted mt-0.5 leading-snug">Reduces background noise picked up by the microphone.</p>
                     </div>
                     <button
                       role="switch"
                       :aria-checked="noiseSuppression"
                       :aria-label="`Noise suppression ${noiseSuppression ? 'on' : 'off'}`"
-                      class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#1a1d21]"
-                      :class="noiseSuppression ? 'bg-accent' : 'bg-white/20'"
+                      class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-app-bg"
+                      :class="noiseSuppression ? 'bg-accent' : 'bg-app-divider'"
                       @click="noiseSuppression = !noiseSuppression"
                     >
                       <span
@@ -269,17 +269,17 @@
                   </div>
 
                   <!-- Echo Cancellation -->
-                  <div class="flex items-center justify-between gap-4 px-1 py-2.5 rounded-lg hover:bg-white/4 transition-colors">
+                  <div class="flex items-center justify-between gap-4 px-1 py-2.5 rounded-lg hover:bg-app-hover transition-colors">
                     <div class="min-w-0">
-                      <p class="text-sm text-white leading-tight">Echo Cancellation</p>
-                      <p class="text-[11px] text-gray-500 mt-0.5 leading-snug">Prevents your speakers from being heard back through your microphone.</p>
+                      <p class="text-sm text-app-text leading-tight">Echo Cancellation</p>
+                      <p class="text-[11px] text-app-muted mt-0.5 leading-snug">Prevents your speakers from being heard back through your microphone.</p>
                     </div>
                     <button
                       role="switch"
                       :aria-checked="echoCancellation"
                       :aria-label="`Echo cancellation ${echoCancellation ? 'on' : 'off'}`"
-                      class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#1a1d21]"
-                      :class="echoCancellation ? 'bg-accent' : 'bg-white/20'"
+                      class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-app-bg"
+                      :class="echoCancellation ? 'bg-accent' : 'bg-app-divider'"
                       @click="echoCancellation = !echoCancellation"
                     >
                       <span
@@ -291,17 +291,17 @@
                   </div>
 
                   <!-- Auto Gain Control -->
-                  <div class="flex items-center justify-between gap-4 px-1 py-2.5 rounded-lg hover:bg-white/4 transition-colors">
+                  <div class="flex items-center justify-between gap-4 px-1 py-2.5 rounded-lg hover:bg-app-hover transition-colors">
                     <div class="min-w-0">
-                      <p class="text-sm text-white leading-tight">Auto Gain Control</p>
-                      <p class="text-[11px] text-gray-500 mt-0.5 leading-snug">Automatically adjusts microphone sensitivity to keep your volume consistent.</p>
+                      <p class="text-sm text-app-text leading-tight">Auto Gain Control</p>
+                      <p class="text-[11px] text-app-muted mt-0.5 leading-snug">Automatically adjusts microphone sensitivity to keep your volume consistent.</p>
                     </div>
                     <button
                       role="switch"
                       :aria-checked="autoGainControl"
                       :aria-label="`Auto gain control ${autoGainControl ? 'on' : 'off'}`"
-                      class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#1a1d21]"
-                      :class="autoGainControl ? 'bg-accent' : 'bg-white/20'"
+                      class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-app-bg"
+                      :class="autoGainControl ? 'bg-accent' : 'bg-app-divider'"
                       @click="autoGainControl = !autoGainControl"
                     >
                       <span
@@ -313,17 +313,17 @@
                   </div>
 
                   <!-- Software Noise Suppression (RNNoise) -->
-                  <div class="flex items-center justify-between gap-4 px-1 py-2.5 rounded-lg hover:bg-white/4 transition-colors">
+                  <div class="flex items-center justify-between gap-4 px-1 py-2.5 rounded-lg hover:bg-app-hover transition-colors">
                     <div class="min-w-0">
-                      <p class="text-sm text-white leading-tight">Software Noise Suppression (RNNoise)</p>
-                      <p class="text-[11px] text-gray-500 mt-0.5 leading-snug">AI-based noise removal via WebAssembly. Overrides browser noise suppression when enabled.</p>
+                      <p class="text-sm text-app-text leading-tight">Software Noise Suppression (RNNoise)</p>
+                      <p class="text-[11px] text-app-muted mt-0.5 leading-snug">AI-based noise removal via WebAssembly. Overrides browser noise suppression when enabled.</p>
                     </div>
                     <button
                       role="switch"
                       :aria-checked="rnnoiseEnabled"
                       :aria-label="`Software noise suppression ${rnnoiseEnabled ? 'on' : 'off'}`"
-                      class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#1a1d21]"
-                      :class="rnnoiseEnabled ? 'bg-accent' : 'bg-white/20'"
+                      class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-app-bg"
+                      :class="rnnoiseEnabled ? 'bg-accent' : 'bg-app-divider'"
                       @click="rnnoiseEnabled = !rnnoiseEnabled"
                     >
                       <span
@@ -335,17 +335,17 @@
                   </div>
 
                   <!-- Mute Microphone On Join -->
-                  <div class="flex items-center justify-between gap-4 px-1 py-2.5 rounded-lg hover:bg-white/4 transition-colors">
+                  <div class="flex items-center justify-between gap-4 px-1 py-2.5 rounded-lg hover:bg-app-hover transition-colors">
                     <div class="min-w-0">
-                      <p class="text-sm text-white leading-tight">Mute microphone on join call</p>
-                      <p class="text-[11px] text-gray-500 mt-0.5 leading-snug">Join calls with your microphone muted until you unmute it manually.</p>
+                      <p class="text-sm text-app-text leading-tight">Mute microphone on join call</p>
+                      <p class="text-[11px] text-app-muted mt-0.5 leading-snug">Join calls with your microphone muted until you unmute it manually.</p>
                     </div>
                     <button
                       role="switch"
                       :aria-checked="muteMicOnJoinCall"
                       :aria-label="`Mute microphone on join call ${muteMicOnJoinCall ? 'on' : 'off'}`"
-                      class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#1a1d21]"
-                      :class="muteMicOnJoinCall ? 'bg-accent' : 'bg-white/20'"
+                      class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-app-bg"
+                      :class="muteMicOnJoinCall ? 'bg-accent' : 'bg-app-divider'"
                       @click="muteMicOnJoinCall = !muteMicOnJoinCall"
                     >
                       <span
@@ -371,20 +371,20 @@
                     >
                       <div class="flex items-start justify-between gap-4 mb-2">
                         <div class="min-w-0">
-                          <label for="mic-gain-slider" class="text-sm text-white leading-tight block">Microphone Level</label>
-                          <p class="text-[11px] text-gray-500 mt-0.5 leading-snug">Manually adjust your microphone volume.</p>
+                          <label for="mic-gain-slider" class="text-sm text-app-text leading-tight block">Microphone Level</label>
+                          <p class="text-[11px] text-app-muted mt-0.5 leading-snug">Manually adjust your microphone volume.</p>
                         </div>
                         <span
                           class="text-sm tabular-nums font-medium w-10 text-right shrink-0 pt-0.5"
-                          :class="(microphoneGain ?? 100) === 100 ? 'text-gray-400' : 'text-white'"
+                          :class="(microphoneGain ?? 100) === 100 ? 'text-app-muted' : 'text-app-text'"
                           aria-hidden="true"
                         >{{ microphoneGain ?? 100 }}%</span>
                       </div>
                       <div class="relative flex items-center gap-3">
-                        <span class="text-[10px] text-gray-600 shrink-0 w-5 text-right">0</span>
+                        <span class="text-[10px] text-app-muted shrink-0 w-5 text-right">0</span>
                         <div class="relative flex-1">
                           <!-- Track fill -->
-                          <div class="absolute inset-y-0 my-auto h-1 rounded-full bg-white/10 w-full" aria-hidden="true"/>
+                          <div class="absolute inset-y-0 my-auto h-1 rounded-full bg-app-divider w-full" aria-hidden="true"/>
                           <div
                             class="absolute inset-y-0 my-auto h-1 rounded-full bg-accent transition-all duration-75"
                             :style="{ width: `${((microphoneGain ?? 100) / 400) * 100}%` }"
@@ -405,12 +405,12 @@
                             @input="microphoneGain = Number(($event.target as HTMLInputElement).value)"
                           />
                         </div>
-                        <span class="text-[10px] text-gray-600 shrink-0 w-7">400</span>
+                        <span class="text-[10px] text-app-muted shrink-0 w-7">400</span>
                       </div>
                       <!-- Unity marker hint -->
                       <div class="flex pl-8 pr-7 mt-0.5">
                         <div class="relative flex-1">
-                          <span class="absolute text-[10px] text-gray-600" style="left: 25%; transform: translateX(-50%)">100%</span>
+                          <span class="absolute text-[10px] text-app-muted" style="left: 25%; transform: translateX(-50%)">100%</span>
                         </div>
                       </div>
                     </div>
@@ -424,21 +424,21 @@
 
           <!-- ── Notifications Section ───────────────────────────── -->
           <section aria-labelledby="notifications-section-heading">
-            <h3 id="notifications-section-heading" class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Notifications</h3>
+            <h3 id="notifications-section-heading" class="text-xs font-semibold text-app-muted uppercase tracking-wider mb-4">Notifications</h3>
 
             <div
               v-if="isDesktopRuntime"
               class="rounded-lg border border-chat-border bg-sidebar-bg/60 px-4 py-3 text-sm"
             >
-              <p class="text-white text-sm font-medium">Desktop notifications</p>
-              <p class="mt-1 text-xs text-gray-400">
+              <p class="text-app-text text-sm font-medium">Desktop notifications</p>
+              <p class="mt-1 text-xs text-app-muted">
                 Msgnr uses native macOS notifications in desktop mode. Push subscription settings are web-only.
               </p>
               <div class="mt-3 flex items-center justify-between gap-3">
-                <span class="text-xs text-gray-400">Permission: {{ desktopPermissionLabel }}</span>
+                <span class="text-xs text-app-muted">Permission: {{ desktopPermissionLabel }}</span>
                 <button
                   type="button"
-                  class="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover transition-colors"
+                  class="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-app-text hover:bg-accent-hover transition-colors"
                   @click="requestDesktopNotificationPermission"
                 >
                   Request permission
@@ -449,12 +449,12 @@
             <!-- Unsupported browser -->
             <div
               v-else-if="pushUnsupported"
-              class="flex items-start gap-3 rounded-lg bg-gray-500/10 border border-gray-500/30 px-4 py-3 text-sm"
+              class="flex items-start gap-3 rounded-lg bg-app-surface border border-app-divider px-4 py-3 text-sm"
             >
-              <svg class="w-4 h-4 mt-0.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+              <svg class="w-4 h-4 mt-0.5 shrink-0 text-app-muted" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
                 <circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/>
               </svg>
-              <p class="text-gray-400 text-xs">Push notifications are not supported in this browser.</p>
+              <p class="text-app-muted text-xs">Push notifications are not supported in this browser.</p>
             </div>
 
             <!-- iOS not installed -->
@@ -477,8 +477,8 @@
             <!-- Push toggle -->
             <div v-else class="flex items-center justify-between gap-4">
               <div class="min-w-0">
-                <p class="text-sm font-medium text-white leading-tight">Push notifications</p>
-                <p class="text-[11px] text-gray-500 mt-0.5 leading-snug">
+                <p class="text-sm font-medium text-app-text leading-tight">Push notifications</p>
+                <p class="text-[11px] text-app-muted mt-0.5 leading-snug">
                   Receive notifications for new messages when Msgnr is closed.
                 </p>
               </div>
@@ -488,8 +488,8 @@
                 :aria-label="pushSubscribed ? 'Disable push notifications' : 'Enable push notifications'"
                 :disabled="pushLoading"
                 type="button"
-                class="relative inline-flex items-center h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#1a1d21] disabled:cursor-not-allowed disabled:opacity-50"
-                :class="pushSubscribed ? 'bg-accent' : 'bg-white/20'"
+                class="relative inline-flex items-center h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-app-bg disabled:cursor-not-allowed disabled:opacity-50"
+                :class="pushSubscribed ? 'bg-accent' : 'bg-app-divider'"
                 @click="togglePush"
               >
                 <span
@@ -506,16 +506,16 @@
         </div>
 
         <!-- ── Footer ─────────────────────────────────────────────── -->
-        <div class="flex items-center justify-between px-6 py-4 border-t border-chat-border shrink-0">
+        <div class="dlg-foot px-6 py-4 shrink-0">
           <button
-            class="px-4 py-2 rounded-md bg-white/10 hover:bg-white/20 text-gray-200 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
+            class="dlg-btn dlg-btn-ghost"
             @click="handleClose"
           >
             Cancel
           </button>
           <button
-            class="px-4 py-2 rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-40 disabled:cursor-not-allowed"
-            :class="isDirty ? 'bg-accent hover:bg-accent-hover text-white' : 'bg-white/10 text-gray-400 cursor-not-allowed'"
+            class="dlg-btn"
+            :class="isDirty ? 'dlg-btn-primary' : 'dlg-btn-ghost cursor-not-allowed'"
             :disabled="!isDirty"
             @click="handleSave"
           >
@@ -637,7 +637,7 @@ const inputStatusClass = computed(() => {
   if (s.includes('denied') || s.includes('disconnected') || s.includes('not found') || s.includes('Failed')) return 'text-red-400'
   if (s.includes('permission') || s.includes('required') || s.includes('Checking') || s.includes('No input')) return 'text-amber-400'
   if (s.includes('granted')) return 'text-emerald-400'
-  return 'text-gray-500'
+  return 'text-app-muted'
 })
 
 const outputStatusClass = computed(() => {
@@ -645,7 +645,7 @@ const outputStatusClass = computed(() => {
   if (s.includes('not supported')) return 'text-amber-400'
   if (s.includes('disconnected') || s.includes('not found')) return 'text-red-400'
   if (s.includes('Connected')) return 'text-emerald-400'
-  return 'text-gray-500'
+  return 'text-app-muted'
 })
 
 const inputLevelBarClass = computed(() => {

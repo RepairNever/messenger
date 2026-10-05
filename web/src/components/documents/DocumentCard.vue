@@ -118,22 +118,22 @@
   <Teleport to="body">
     <div
       v-if="historyModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      class="dlg-overlay z-50"
       @click.self="closeHistoryModal"
     >
-      <div class="w-full max-w-5xl rounded-xl border border-chat-border bg-chat-header p-4 shadow-2xl">
-        <h3 class="mb-3 text-base font-semibold text-white">Document History</h3>
+      <div class="dlg-window max-w-5xl p-4">
+        <h3 class="dlg-title mb-3">Document History</h3>
         <div class="grid gap-4 md:grid-cols-[280px_minmax(0,1fr)]">
           <aside class="rounded border border-chat-border bg-chat-input/40 p-2">
-            <div class="mb-2 text-xs uppercase tracking-wide text-gray-400">Versions</div>
-            <p v-if="historyLoading" class="px-2 py-2 text-xs text-gray-500">Loading versions...</p>
-            <p v-else-if="historyError" class="px-2 py-2 text-xs text-red-400">{{ historyError }}</p>
-            <p v-else-if="historyItems.length === 0" class="px-2 py-2 text-xs text-gray-500">No versions yet</p>
+            <div class="mb-2 text-xs uppercase tracking-wide text-app-muted">Versions</div>
+            <p v-if="historyLoading" class="px-2 py-2 text-xs text-app-muted">Loading versions...</p>
+            <p v-else-if="historyError" class="px-2 py-2 text-xs text-app-danger">{{ historyError }}</p>
+            <p v-else-if="historyItems.length === 0" class="px-2 py-2 text-xs text-app-muted">No versions yet</p>
             <ul v-else class="max-h-[420px] space-y-1 overflow-y-auto pr-1">
               <li v-for="item in historyItems" :key="`${item.created_at}:${item.edited_by}`">
                 <button
                   type="button"
-                  class="flex w-full items-start gap-2 rounded border border-transparent px-2 py-1.5 text-left transition-colors hover:bg-white/5"
+                  class="flex w-full items-start gap-2 rounded border border-transparent px-2 py-1.5 text-left transition-colors hover:bg-app-hover"
                   :class="historyCandidate === item ? 'border-accent/50 bg-accent/20' : ''"
                   @click="selectHistoryItem(item)"
                 >
@@ -145,8 +145,8 @@
                     size="xs"
                   />
                   <span class="min-w-0">
-                    <span class="block truncate text-xs text-gray-200">{{ item.editor.display_name }}</span>
-                    <span class="block text-[11px] text-gray-500">{{ formatDatetime(item.created_at) }}</span>
+                    <span class="block truncate text-xs text-app-text">{{ item.editor.display_name }}</span>
+                    <span class="block text-[11px] text-app-muted">{{ formatDatetime(item.created_at) }}</span>
                   </span>
                 </button>
               </li>
@@ -156,16 +156,16 @@
           <div class="space-y-3">
             <template v-if="historyCandidate">
               <div>
-                <div class="mb-1 text-xs uppercase tracking-wide text-gray-400">Title</div>
+                <div class="mb-1 text-xs uppercase tracking-wide text-app-muted">Title</div>
                 <input
                   :value="historyCandidate.title"
                   type="text"
                   readonly
-                  class="w-full rounded border border-chat-border bg-chat-input px-2 py-1 text-sm text-gray-200"
+                  class="w-full rounded border border-chat-border bg-app-input px-2 py-1 text-sm text-app-text"
                 >
               </div>
               <div>
-                <div class="mb-1 text-xs uppercase tracking-wide text-gray-400">Content</div>
+                <div class="mb-1 text-xs uppercase tracking-wide text-app-muted">Content</div>
                 <div class="max-h-[420px] overflow-y-auto pr-1">
                   <TaskDescriptionEditor v-model="historyPreviewDraft" :editable="false" />
                 </div>

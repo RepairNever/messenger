@@ -48,7 +48,7 @@
           <rect x="4" y="4" width="16" height="16" rx="2" /><path d="M9 11h6M9 15h4" />
         </svg>
         <span>No tasks found</span>
-        <button class="text-accent hover:underline text-xs mt-1" @click="tasksStore.openCreateDialog">Create a task</button>
+        <button class="text-accent-text hover:underline text-xs mt-1" @click="tasksStore.openCreateDialog">Create a task</button>
       </div>
 
       <table v-else-if="!isGrouped" class="w-full text-sm">
@@ -134,7 +134,7 @@
             class="px-6 py-2 border-b border-chat-border"
           >
             <button
-              class="text-xs text-accent hover:underline disabled:opacity-60 disabled:no-underline"
+              class="text-xs text-accent-text hover:underline disabled:opacity-60 disabled:no-underline"
               :disabled="group.loading_more"
               @click="loadMoreForStatus(group.status.id)"
             >
@@ -331,6 +331,6 @@ function formatDate(v: string): string {
          select-none transition-colors hover:text-white hover:bg-white/5;
 }
 .view-mode-option.active {
-  @apply text-accent bg-accent/10;
+  @apply text-accent-text bg-accent/10;
 }
 </style>

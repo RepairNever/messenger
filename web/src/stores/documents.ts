@@ -311,6 +311,26 @@ export const useDocumentsStore = defineStore('documents', () => {
     return changed ? result : nodes
   }
 
+  function updateDocumentTitleInTree(
+    nodes: SidebarDocumentNode[] | null | undefined,
+    documentId: string,
+    title: string,
+  ): SidebarDocumentNode[] | null | undefined {
+    if (!Array.isArray(nodes)) return nodes
+    let changed = false
+    const result = nodes.map((node) => {
+      if (node.id === documentId) {
+        changed = true
+        return { ...node, title }
+      }
+      const children = updateDocumentTitleInTree(node.children, documentId, title)
+      if (children === node.children) return node
+      changed = true
+      return { ...node, children: Array.isArray(children) ? children : [] }
+    })
+    return changed ? result : nodes
+  }
+
   function applyDocumentFavorite(favorite: DocumentFavoriteResponse) {
     sidebarTeamspaces.value = sidebarTeamspaces.value.map((teamspace) => {
       const documents = updateDocumentFavoriteInTree(teamspace.documents, favorite.document_id, favorite)
@@ -410,6 +430,19 @@ export const useDocumentsStore = defineStore('documents', () => {
     return row
   }
 
+  async function renameDocument(id: string, title: string) {
+    const row = await documentsUpdateDocument(id, { title })
+    sidebarTeamspaces.value = sidebarTeamspaces.value.map((teamspace) => {
+      const documents = updateDocumentTitleInTree(teamspace.documents, id, row.title)
+      if (documents === teamspace.documents) return teamspace
+      return { ...teamspace, documents: Array.isArray(documents) ? documents : [] }
+    })
+    if (selectedDocument.value?.id === id) {
+      selectedDocument.value = row
+    }
+    return row
+  }
+
   async function updateDocumentContent(id: string, payload: UpdateDocumentContentPayload) {
     const requestKey = `${Date.now()}:${id}`
     selectedDocumentContentRequestKey.value = requestKey
@@ -481,6 +514,7 @@ export const useDocumentsStore = defineStore('documents', () => {
     joinTeamspace,
     createDocument,
     updateDocument,
+    renameDocument,
     updateDocumentContent,
     deleteDocument,
     favoriteDocument,

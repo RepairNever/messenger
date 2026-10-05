@@ -115,7 +115,7 @@
 
         <li
           v-if="showCreate"
-          class="px-3 py-1.5 cursor-pointer transition-colors text-sm text-accent"
+          class="px-3 py-1.5 cursor-pointer transition-colors text-sm text-accent-text"
           :class="activeIndex === filtered.length ? 'bg-white/10' : 'hover:bg-white/5'"
           @mouseenter="activeIndex = filtered.length"
           @click="emitCreate"

@@ -13,7 +13,7 @@
         Attachments ({{ attachments.length }})
       </span>
       <label
-        class="text-xs text-accent hover:text-accent-hover transition-colors cursor-pointer"
+        class="text-xs text-accent-text hover:text-accent-text transition-colors cursor-pointer"
         :class="uploading ? 'opacity-50 pointer-events-none' : ''"
       >
         {{ uploading ? `Uploading… (${uploadProgress.done}/${uploadProgress.total})` : '+ Add file' }}
@@ -36,7 +36,7 @@
         {{ ue.name }}: {{ ue.message }}
       </li>
     </ul>
-    <p v-if="isDragOver" class="text-accent text-xs mb-2 px-0.5">Drop files to attach</p>
+    <p v-if="isDragOver" class="text-accent-text text-xs mb-2 px-0.5">Drop files to attach</p>
 
     <!-- Loading -->
     <div v-if="loading" class="text-sm text-gray-500 italic">Loading…</div>
@@ -85,7 +85,7 @@
             <!-- Video play badge -->
             <button
               v-else-if="isVideo(att.mime_type)"
-              class="flex items-center justify-center w-10 h-10 rounded bg-black/30 border border-white/10 text-accent hover:text-accent-hover hover:bg-black/50 transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
+              class="flex items-center justify-center w-10 h-10 rounded bg-black/30 border border-white/10 text-accent-text hover:text-accent-text hover:bg-black/50 transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
               title="Play video"
               @click="openPlayer(att)"
             >
@@ -97,8 +97,8 @@
               v-else-if="isAudio(att.mime_type)"
               class="flex items-center justify-center w-10 h-10 rounded bg-black/30 border border-white/10 transition-colors focus:outline-none focus:ring-2 focus:ring-accent"
               :class="audioPlayer.attachmentId === att.id && audioPlayer.open
-                ? 'text-accent border-accent/40'
-                : 'text-gray-400 hover:text-accent hover:bg-black/50'"
+                ? 'text-accent-text border-accent/40'
+                : 'text-gray-400 hover:text-accent-text hover:bg-black/50'"
               :title="audioPlayer.attachmentId === att.id && audioPlayer.open ? 'Collapse player' : 'Play audio'"
               @click="toggleAudio(att)"
             >

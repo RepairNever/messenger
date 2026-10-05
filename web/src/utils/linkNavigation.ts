@@ -53,6 +53,31 @@ function isUserMentionHref(href: string): boolean {
   return href.trim().startsWith('msgnr-mention://user/')
 }
 
+// Schemes a message author may link to. Everything else (javascript:, data:,
+// vbscript:, file:, ...) must never become clickable content and must never
+// reach openMarkdownLink. The click delegation in handleMarkdownLinkClick is
+// only the first line of defense: auxiliary clicks (middle-click,
+// modifier-click, the browser context menu) bypass it and use the browser's
+// default navigation.
+const SAFE_URL_SCHEMES = new Set(['http:', 'https:', 'mailto:'])
+
+/**
+ * True when href is safe to render as a clickable link. Relative URLs and the
+ * app's msgnr-* pseudo-schemes are allowed; absolute URLs must carry a scheme
+ * from the allowlist.
+ */
+export function isSafeMessageUrl(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed) return false
+  if (isAttachmentHref(trimmed) || isUserMentionHref(trimmed)) return true
+  if (!hasScheme(trimmed)) return true
+  try {
+    return SAFE_URL_SCHEMES.has(new URL(trimmed).protocol)
+  } catch {
+    return false
+  }
+}
+
 export function resolveMarkdownLinkTarget(href: string, router: Router): { kind: 'invalid' | 'attachment' | 'mention-user' | 'internal' | 'external'; href: string; target?: string } {
   const trimmed = href.trim()
   if (!trimmed) {
@@ -65,6 +90,10 @@ export function resolveMarkdownLinkTarget(href: string, router: Router): { kind:
 
   if (isUserMentionHref(trimmed)) {
     return { kind: 'mention-user', href: trimmed }
+  }
+
+  if (!isSafeMessageUrl(trimmed)) {
+    return { kind: 'invalid', href: trimmed }
   }
 
   const url = resolveUrl(trimmed)

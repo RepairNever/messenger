@@ -74,34 +74,34 @@
 
     <!-- Create / Edit dialog -->
     <Teleport to="body">
-      <div v-if="dialogOpen" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" @click.self="dialogOpen = false">
-        <div class="bg-[#222529] border border-chat-border rounded-xl shadow-2xl w-full max-w-sm p-6">
-          <h3 class="text-lg font-bold text-white mb-4">{{ dialogMode === 'create' ? 'Create Status' : 'Edit Status' }}</h3>
+      <div v-if="dialogOpen" class="dlg-overlay z-50" @click.self="dialogOpen = false">
+        <div class="dlg-window p-6" role="dialog" aria-modal="true">
+          <h3 class="dlg-title mb-4">{{ dialogMode === 'create' ? 'Create Status' : 'Edit Status' }}</h3>
           <div class="space-y-3">
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Code</label>
+              <label class="dlg-label">Code</label>
               <input
                 v-model="form.code"
                 type="text"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm font-mono outline-none focus:border-accent"
+                class="dlg-input font-mono"
                 placeholder="in_progress"
               />
             </div>
             <div>
-              <label class="block text-sm text-gray-400 mb-1">Name</label>
+              <label class="dlg-label">Name</label>
               <input
                 v-model="form.name"
                 type="text"
-                class="w-full bg-chat-input border border-chat-border rounded px-3 py-2 text-white text-sm outline-none focus:border-accent"
+                class="dlg-input"
                 placeholder="In Progress"
               />
             </div>
           </div>
-          <div v-if="dialogError" class="text-red-400 text-sm mt-3">{{ dialogError }}</div>
+          <div v-if="dialogError" class="text-app-danger text-sm mt-3">{{ dialogError }}</div>
           <div class="flex gap-3 mt-5">
-            <button class="flex-1 py-2 rounded bg-white/10 hover:bg-white/20 text-gray-200 text-sm transition-colors" @click="dialogOpen = false">Cancel</button>
+            <button class="dlg-btn dlg-btn-ghost flex-1" @click="dialogOpen = false">Cancel</button>
             <button
-              class="flex-1 py-2 rounded bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
+              class="dlg-btn dlg-btn-primary flex-1"
               :disabled="dialogLoading"
               @click="submitDialog"
             >{{ dialogLoading ? 'Saving...' : 'Save' }}</button>

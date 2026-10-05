@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+
+	"msgnr/internal/chat"
 )
 
 func TestTokenBucketLimiter_BurstThenRefill(t *testing.T) {
@@ -80,16 +82,16 @@ func TestPollCounter_CapsAndReleases(t *testing.T) {
 }
 
 func TestValidClientMsgID(t *testing.T) {
-	assert.True(t, validClientMsgID("bot-evt-4512"))
-	assert.True(t, validClientMsgID("a"))
-	assert.True(t, validClientMsgID("A.b_c:d~e-f"))
-	assert.True(t, validClientMsgID("trigger:DEV-42.001"))
+	assert.True(t, chat.IsValidClientMsgID("bot-evt-4512"))
+	assert.True(t, chat.IsValidClientMsgID("a"))
+	assert.True(t, chat.IsValidClientMsgID("A.b_c:d~e-f"))
+	assert.True(t, chat.IsValidClientMsgID("trigger:DEV-42.001"))
 
-	assert.False(t, validClientMsgID(""), "empty")
-	assert.False(t, validClientMsgID("has space"))
-	assert.False(t, validClientMsgID("слова"))
-	assert.False(t, validClientMsgID("bad@symbol"))
-	assert.False(t, validClientMsgID(strings.Repeat("a", 129)))
+	assert.False(t, chat.IsValidClientMsgID(""), "empty")
+	assert.False(t, chat.IsValidClientMsgID("has space"))
+	assert.False(t, chat.IsValidClientMsgID("слова"))
+	assert.False(t, chat.IsValidClientMsgID("bad@symbol"))
+	assert.False(t, chat.IsValidClientMsgID(strings.Repeat("a", 129)))
 }
 
 func TestService_CloseIsIdempotentAndWakesParkedPolls(t *testing.T) {

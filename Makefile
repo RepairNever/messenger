@@ -18,14 +18,14 @@ proto-tools:
 
 # Build the server
 build: proto sqlc
-	go build -trimpath -o server ./cmd/server
+	CGO_ENABLED=0 go build -trimpath -o server ./cmd/server
 
 build-linux: proto sqlc
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -installsuffix cgo -trimpath -o server-linux ./cmd/server
 
 # Run the server
 run: proto sqlc
-	go run ./cmd/server
+	CGO_ENABLED=0 go run ./cmd/server
 
 # Clean build artifacts
 clean:
@@ -38,11 +38,11 @@ deps:
 
 # Run all Go tests
 test: proto sqlc
-	go test ./...
+	CGO_ENABLED=0 go test ./...
 
 # Run only unit tests (no DB required)
 test-unit:
-	go test ./internal/auth/... ./internal/events/... ./internal/ws/... -v -count=1
+	CGO_ENABLED=0 go test ./internal/auth/... ./internal/events/... ./internal/ws/... -v -count=1
 
 # Run Phase 3 event pipeline tests
 test-events:
