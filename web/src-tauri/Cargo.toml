@@ -1,6 +1,6 @@
 [package]
 name = "msgnr-desktop"
-version = "0.34.0"
+version = "0.35.0"
 description = "Msgnr desktop shell"
 authors = ["Msgnr Team"]
 edition = "2021"

@@ -1,6 +1,6 @@
 # Bot API
 
-This document describes the versioned HTTP API under `/api/bot/v1/*` that the external LLM Bot Service integrates over. The Bot Service consumes workspace events and acts in the workspace (posting replies, commenting on tasks, creating documents) exclusively through these endpoints — **bots never open a WebSocket connection**; the event stream is HTTP long-polling (`GET /api/bot/v1/events`).
+This document describes the versioned HTTP API under `/api/bot/v1/*` that the external LLM Bot Service integrates over. The Bot Service consumes workspace events and acts in the workspace (posting replies, creating tasks, updating tasks, commenting on tasks, creating documents) exclusively through these endpoints — **bots never open a WebSocket connection**; the event stream is HTTP long-polling (`GET /api/bot/v1/events`).
 
 ## Authentication
 
@@ -221,6 +221,140 @@ Returns `200` with a JSON array of task DTOs containing `public_id`, `title`, `d
 - Encode the label as a URL path segment (spaces as `%20`; encode reserved characters such as `/`, `%`, `#`, and `?`).
 
 Blank labels or malformed lookup paths return `400 {"error":"invalid enum lookup path"}`; unknown labels are not errors. The general mirrored route is `GET /api/bot/v1/tasks/by-enum/{enum_code}/value/{enum_value}`; this longer route takes precedence over the public-ID task route.
+
+### Get task configuration
+
+`GET /api/bot/v1/tasks/config` — discover active templates, their active fields, and active statuses. No query parameters.
+
+```json
+{
+  "templates": [
+    {
+      "id": "…template-uuid…",
+      "prefix": "DEV",
+      "fields": [
+        {
+          "id": "…field-uuid…",
+          "code": "version",
+          "name": "Version",
+          "type": "enum",
+          "required": false,
+          "dictionary": {"id": "…dictionary-uuid…", "code": "version", "current_version": 4}
+        },
+        {
+          "id": "…field-uuid…",
+          "code": "owner",
+          "name": "Owner",
+          "type": "user",
+          "required": true,
+          "field_role": "assignee"
+        }
+      ]
+    }
+  ],
+  "statuses": [{"id": "…status-uuid…", "code": "open", "name": "Open", "sort_order": 10}]
+}
+```
+
+Templates are ordered by `sort_order`, then `prefix`; fields by `sort_order`, then `code`; statuses by `sort_order`, then `name`. Soft-deleted templates, fields, and statuses are excluded. `dictionary` is present for `enum` and `multi_enum` fields; `field_role` is omitted when unset. Dictionary items are not included; invalid enum-value errors list current candidates.
+
+Use the template `prefix`, field `code`, and status `code` when writing tasks. Assignee and priority are template fields, when configured; neither is a separate top-level task parameter. Non-GET methods return `405 {"error":"method not allowed"}`.
+
+### Look up users
+
+`GET /api/bot/v1/users?q=Alice&limit=20` — resolve active human users for `user` and `users` fields, including assignee fields. Results are organization-wide; bot users and inactive users are excluded.
+
+```json
+{"users": [{"user_id": "…user-uuid…", "display_name": "Alice", "email": "alice@example.com"}]}
+```
+
+- `q` is optional. It is trimmed; absent, empty, or whitespace-only queries return the first page. A nonempty query must contain at least 2 runes, otherwise `400 {"error":"query must be at least 2 characters"}`. Matching is a literal, case-insensitive substring of `display_name` or `email`; `%` and `_` are ordinary characters.
+- `limit` defaults to 20 and is clamped to 1..50. A non-numeric value returns `400 {"error":"invalid limit"}`. There is no cursor.
+- Results are ordered by the stored `display_name`, then user ID. A blank display name stays blank; it does not fall back to the email.
+
+Non-GET methods return `405 {"error":"method not allowed"}`.
+
+### Create a task
+
+`POST /api/bot/v1/tasks`
+
+```json
+{
+  "template": "DEV",
+  "title": "Fix payout retry",
+  "description": "Handle transient payout failures.",
+  "parent_public_id": "DEV-42",
+  "status": "open",
+  "field_values": [
+    {"code": "version", "value": "Trade Financial API v1.113.0"},
+    {"code": "owner", "value": "…user-uuid…"}
+  ]
+}
+```
+
+- `template` is required and must exactly match an active template prefix; missing or blank returns `400 {"error":"bad request: template is required"}`. Field codes must exactly match active fields of that template.
+- `title` is required and nonblank after trimming. `description` is optional, a string or `null`; absent, `null`, and whitespace-only strings mean no description. Title and description are trimmed before storage.
+- `status` is optional. When omitted, the first active status in configuration order is used; an installation with no active statuses returns `400`. Supplied statuses are trimmed and resolved by exact code first, then by a unique case-insensitive code match. Status names are display-only.
+- `parent_public_id` is optional. A parent must exist and be top-level: a missing parent returns `404 {"error":"not found: parent task"}`; using a subtask as parent returns `400 {"error":"bad request: parent task is already a subtask"}`.
+- `field_values` is optional. Each entry requires `code` and `value`. A missing `value` returns `400` with `bad request: value is required for field "<code>"`. Duplicate field codes are rejected.
+
+Field values use these shapes:
+
+| Field type | Accepted JSON `value` | Stored value |
+|---|---|---|
+| `text` | String | Text |
+| `number` | JSON number or numeric string | Exact decimal |
+| `user` | User UUID string | User ID |
+| `users` | Array of user UUID strings | User ID array |
+| `enum` | Item code or item name string | Canonical item code with dictionary ID and current version |
+| `multi_enum` | Array of item code or item name strings | Canonical code array with dictionary ID and current version |
+| `date` | `"YYYY-MM-DD"` | Calendar date |
+| `datetime` | RFC3339 string | Timestamp |
+
+`null` means unset for any field. An empty `users` or `multi_enum` array also means unset. Required-field validation still applies; a missing required value returns `400` with `bad request: required field "<code>" is missing`.
+
+Numbers accept decimal and exponent notation without floating-point conversion. The exact normalized value must fit `numeric(20,6)` without rounding: at most 14 digits before the decimal point and 6 fractional places after removing trailing zeros. Thus `1.2300000` and `123e-2` are accepted, while `1.0000001` and `100000000000000` are rejected with `400`.
+
+Every supplied user ID must resolve to an active human user. Unknown IDs return `400` with `bad request: unknown user <id>`; duplicate UUIDs in a `users` array are rejected even when their string spellings differ. Dates must be real calendar dates; malformed dates, timestamps, and wrong JSON value types return `400`.
+
+Enum resolution considers only active items in the dictionary's current version. After trimming, an exact item code wins; otherwise, a unique case-insensitive match on code or name is required. Ambiguous matches are rejected. Multi-enum duplicates are detected after canonicalization: two labels resolving to the same code return `400` with `bad request: duplicate value "<value_code>" in field "<code>"`. Existing historical values can still appear in task reads and enum searches even when they are no longer writable.
+
+Unknown templates, statuses, field codes, and enum values return `400` errors listing valid candidates. Listings are capped at 50 and end with `…` when truncated; ambiguity is checked across all matches before this cap. For example, a misplaced top-level `"priority"` is rejected rather than applied as a field: `400 {"error":"bad request: unknown key priority"}`.
+
+Both task write endpoints require exactly one JSON object, with no trailing JSON; malformed bodies return `400 {"error":"invalid request body"}`. Unknown top-level keys and unknown keys inside field entries are rejected with `bad request: unknown key <key>`.
+
+Returns `201 Created` with the same DTO as [Get task context](#get-task-context), including the assigned `public_id`, parent information, and field values. The authenticated bot is the task's creator and updater. Validation failures create nothing. There is no idempotency key: retrying a successful create can create another task with the next sequence number.
+
+Task creation records existing task history but emits no workspace event or live WebSocket push. Attachments, template/status/dictionary administration, and task deletion are outside this API. Non-POST methods on `/tasks` return `405 {"error":"method not allowed"}`.
+
+### Update a task
+
+`PATCH /api/bot/v1/tasks/{public_id}`
+
+```json
+{
+  "title": "Fix payout retry and backoff",
+  "description": null,
+  "status": "done",
+  "field_values": [
+    {"code": "version", "value": "Trade Financial API v1.114.0"},
+    {"code": "priority", "value": null}
+  ]
+}
+```
+
+Returns `200` with the same task DTO as [Get task context](#get-task-context), re-fetched after the update. An unknown task returns `404 {"error":"not found: task"}`. Supplied values use the same validation and canonicalization rules as creation.
+
+- Omitted title, description, status, and field entries keep their current values. `title: null` and `status: null` are also treated as omitted. `description: null` clears the description; a string sets it after trimming, and a whitespace-only string clears it.
+- `field_values` merges by code. A supplied `value: null` clears exactly that field; `[]` clears a `users` or `multi_enum` field. `field_values: []` clears no active field value. Untouched enum values retain their stored dictionary version and code, including historical values that would fail new-write validation.
+- Clearing a required field is rejected. Required-field validation applies to the complete merged task, so even `{}` returns `400` if an active required field is already missing.
+- `parent_public_id`, `template`, and `public_id` cannot be updated. Their presence, including `null`, returns `400` with `bad request: <key> is not updatable`. Unknown keys at either object level and entries missing `value` are rejected as on create.
+
+`{}` is legal. When the merged state has no changes, it returns the current DTO without a write. Any PATCH can normalize surrounding whitespace in legacy titles/descriptions and remove rows belonging to inactive field definitions or rows with every value column NULL. These cleanup rules also apply to `field_values: []`; cleanup can record task history while leaving the response's field values unchanged.
+
+Rejected updates leave task values and history unchanged. Real changes retain existing task audit history and attribute the update to the authenticated bot. Updates use read/merge/write with last-writer-wins behavior; concurrent changes can be overwritten, and there is no optimistic-lock parameter. Task updates emit no workspace event or live WebSocket push, including status changes.
+
+The public-ID task route supports GET and PATCH; other methods return `405 {"error":"method not allowed"}`.
 
 ### List task comments
 

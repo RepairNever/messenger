@@ -68,3 +68,42 @@ FROM document_attachment a
 JOIN document d ON d.id = a.document_id AND d.archived_at IS NULL
 JOIN teamspace t ON t.id = d.teamspace_id AND t.deleted_at IS NULL
 WHERE a.id = @attachment_id;
+
+-- name: ListBotActiveUsers :many
+-- strpos treats percent signs and underscores literally rather than as LIKE wildcards.
+SELECT id, display_name, email
+FROM users
+WHERE status = 'active'
+  AND role <> 'bot'
+  AND (
+    @query::text = ''
+    OR strpos(lower(display_name), lower(@query::text)) > 0
+    OR strpos(lower(email), lower(@query::text)) > 0
+  )
+ORDER BY display_name ASC, id ASC
+LIMIT @result_limit::int;
+
+-- name: ListBotCurrentEnumItems :many
+SELECT d.id AS dictionary_id, d.current_version,
+       i.value_code, i.value_name, i.sort_order
+FROM enum_dictionary d
+JOIN enum_dictionary_version v
+  ON v.dictionary_id = d.id AND v.version = d.current_version
+JOIN enum_dictionary_version_item i ON i.dictionary_version_id = v.id
+WHERE d.id = @enum_dictionary_id AND i.is_active = true
+ORDER BY i.sort_order ASC, i.value_name ASC, i.value_code ASC;
+
+-- name: FindBotCurrentEnumItems :many
+SELECT d.id AS dictionary_id, d.current_version,
+       i.value_code, i.value_name, i.sort_order
+FROM enum_dictionary d
+JOIN enum_dictionary_version v
+  ON v.dictionary_id = d.id AND v.version = d.current_version
+JOIN enum_dictionary_version_item i ON i.dictionary_version_id = v.id
+WHERE d.id = @enum_dictionary_id AND i.is_active = true
+  AND (
+    i.value_code = @enum_value::text
+    OR lower(btrim(i.value_code)) = lower(@enum_value::text)
+    OR lower(btrim(i.value_name)) = lower(@enum_value::text)
+  )
+ORDER BY i.sort_order ASC, i.value_name ASC, i.value_code ASC;

@@ -96,7 +96,7 @@
         </div>
 
         <!-- ── Main stage ─────────────────────────────────────────────── -->
-        <div ref="stageEl" class="cw-stage-zone">
+        <div ref="stageEl" class="cw-stage-zone" :style="stageZoneStyle">
 
           <!--
             Remote screen share video — ALWAYS in DOM (v-show, not v-if) so the
@@ -1191,8 +1191,17 @@ const containerClass = computed(() =>
   maximized.value ? 'fixed inset-0 z-50' : 'fixed inset-0 z-50 pointer-events-none'
 )
 
+// Column tiers: up to 3 tiles per row through 9 participants, 4 per row for
+// 10–12, then 5 per row. The window width stays fixed; tiles shrink per tier.
+const gridCols = computed(() => {
+  const n = participantTiles.value.length
+  if (n <= 9) return Math.min(n, 3)
+  if (n <= 12) return 4
+  return 5
+})
+
 const panelClass = computed(() =>
-  maximized.value ? 'cw-window cw-window-max' : 'cw-window'
+  maximized.value ? 'cw-window cw-window-max' : `cw-window cw-window-cols-${gridCols.value}`
 )
 
 const minimizedDockStyle = computed<CSSProperties>(() => ({
@@ -1217,7 +1226,8 @@ const contentClass = computed(() =>
     : 'flex flex-col'
 )
 
-// Tile grid — explicit rows/heights in maximized mode to avoid tile overlap.
+// Normal mode: fixed 192×144 tiles, column count by tier, window height
+// follows the row count. Maximized mode: explicit rows/heights to avoid tile overlap.
 const tileGridClass = computed(() => {
   const n = participantTiles.value.length
   const base = 'cw-grid'
@@ -1227,10 +1237,18 @@ const tileGridClass = computed(() => {
     if (n <= 4) return `${base} cw-grid-4`
     return `${base} cw-grid-many cw-grid-scroll`
   }
-  if (n <= 1) return `${base} cw-grid-1`
-  if (n === 2) return `${base} cw-grid-2`
-  if (n <= 4) return `${base} cw-grid-4`
-  return `${base} cw-grid-many`
+  return `${base} cw-grid-fixed cw-grid-cols-${gridCols.value}`
+})
+
+// Stage height = grid rows × 144px (+ gaps/padding), unbounded — the window
+// grows downward as rows stack. Pinned and remote screen-share stages keep
+// the fixed full-view height; maximized flexes.
+const stageZoneStyle = computed<CSSProperties | undefined>(() => {
+  if (maximized.value || pinnedSid.value || remoteScreenStageVisible.value || remoteScreenStagePausedVisible.value) {
+    return undefined
+  }
+  const rows = Math.max(Math.ceil(participantTiles.value.length / Math.max(gridCols.value, 1)), 1)
+  return { height: `${rows * 154 + 14}px` }
 })
 
 const DOCK_DRAG_IGNORE_SELECTOR = 'button, a, input, textarea, select, label, [role="button"], [contenteditable="true"]'
@@ -2684,6 +2702,7 @@ async function handleEnableAudio() {
   --cw-accent-border: rgba(124, 134, 232, 0.42);
   --cw-accent-text: #aeb5f2;
   --cw-live: #4cd48a;
+  --cw-speaking: #50e293;
   --cw-danger: #e5484d;
   --cw-danger-hover: #f05a5f;
   --cw-amber: #f2b33d;
@@ -2715,6 +2734,14 @@ async function handleEnableAudio() {
   border: none;
   border-radius: 0;
 }
+
+/* Normal-mode width is fixed; tiles adapt to the column tier (192px tile +
+   10px gaps + 24px grid padding + 2px window border). */
+.cw-window-cols-1,
+.cw-window-cols-2,
+.cw-window-cols-3,
+.cw-window-cols-4,
+.cw-window-cols-5 { width: min(120vw, 620px); }
 
 /* ── Top bar ─────────────────────────────────────────────────────────────── */
 
@@ -2792,6 +2819,13 @@ button.cw-iconbtn:hover {
   height: auto;
   min-height: 0;
   flex: 1 1 0;
+}
+
+/* Stage height is set inline from the grid row count (rows × 144px tile +
+   10px gaps + 24px padding). Capped by the viewport in normal mode; the grid
+   scrolls when the cap kicks in. */
+.cw-window:not(.cw-window-max) .cw-stage-zone {
+  max-height: calc(100vh - 140px);
 }
 
 .cw-owner {
@@ -2976,8 +3010,8 @@ button.cw-iconbtn:hover {
 }
 
 .cw-tile-speaking {
-  border-color: var(--cw-accent-border);
-  box-shadow: 0 0 0 1px var(--cw-accent-border), 0 0 18px rgba(124, 134, 232, 0.18);
+  border-color: var(--cw-speaking);
+  box-shadow: 0 0 0 1px var(--cw-speaking), 0 0 18px rgba(80, 226, 147, 0.2);
 }
 
 .cw-grid {
@@ -3000,6 +3034,22 @@ button.cw-iconbtn:hover {
   overflow-y: auto;
   align-content: start;
 }
+
+/* Normal mode: fixed 192×144 tiles (shrinking when a wider tier outgrows the
+   fixed window width), centered. The stage height is sized to the row count,
+   so the grid only scrolls when the viewport max-height cap clips it. */
+.cw-grid-fixed {
+  grid-auto-rows: 144px;
+  justify-content: center;
+  overflow-y: auto;
+  align-content: start;
+}
+
+.cw-grid-cols-1 { grid-template-columns: minmax(0, 192px); }
+.cw-grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 192px)); }
+.cw-grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cw-grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 192px)); }
+.cw-grid-cols-5 { grid-template-columns: repeat(5, minmax(0, 192px)); }
 
 /* ── Annotation toolbar (static showcase) ────────────────────────────────── */
 

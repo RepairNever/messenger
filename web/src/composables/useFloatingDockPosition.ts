@@ -56,6 +56,11 @@ export function useFloatingDockPosition() {
     const el = elements[mode].value
     if (!el) return null
     const { width, height } = readSize(el)
+    if (mode === 'expanded') {
+      // The call window grows downward when participants join, so its default
+      // anchor must hold the top edge fixed.
+      return clampPosition(mode, { x: window.innerWidth - width, y: 0 })
+    }
     return clampPosition(mode, {
       x: window.innerWidth - width,
       y: window.innerHeight - height,
@@ -92,8 +97,11 @@ export function useFloatingDockPosition() {
   }
 
   function registerElement(mode: FloatingDockMode, el: HTMLElement | null) {
+    const previous = elements[mode].value
+    if (previous && previous !== el) resizeObserver?.unobserve(previous)
     elements[mode].value = el
     if (!el) return
+    resizeObserver?.observe(el)
     const position = positions[mode]
     if (position) {
       positions[mode] = clampPosition(mode, position)
@@ -144,6 +152,12 @@ export function useFloatingDockPosition() {
         top: `${position.y}px`,
       }
     }
+    if (mode === 'expanded') {
+      return {
+        right: '0px',
+        top: '0px',
+      }
+    }
     return {
       right: '0px',
       bottom: '0px',
@@ -154,10 +168,20 @@ export function useFloatingDockPosition() {
     resetIfInvalid()
   }
 
+  // Nothing else observes the dock element's size; without this the stored
+  // position goes stale when the window resizes itself (participant count).
+  const resizeObserver: ResizeObserver | null =
+    typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => {
+          resetIfInvalid()
+        })
+      : null
+
   if (typeof window !== 'undefined' && canManageLifecycle) {
     window.addEventListener('resize', handleWindowResize)
     onScopeDispose(() => {
       stopDrag()
+      resizeObserver?.disconnect()
       window.removeEventListener('resize', handleWindowResize)
     })
   }

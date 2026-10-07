@@ -1,8 +1,9 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RichTextComposer from '@/components/RichTextComposer.vue'
 import type { Task } from '@/services/http/tasksApi'
+import { renderMarkdownToHtml } from '@/utils/markdown'
 
 const tasksApiMocks = vi.hoisted(() => ({
   tasksGet: vi.fn(),
@@ -14,6 +15,188 @@ vi.mock('@/services/http/tasksApi', async (importOriginal) => {
     ...actual,
     tasksGet: tasksApiMocks.tasksGet,
   }
+})
+
+describe('RichTextComposer Markdown paste and edit', () => {
+  let wrapper: ReturnType<typeof mount>
+
+  afterEach(() => wrapper?.unmount())
+
+  async function createComposer(modelValue = '', enableMessageEntities = true, enableTaskItems = false) {
+    wrapper = mount(RichTextComposer, {
+      props: { modelValue, enableMessageEntities, enableTaskItems },
+      attachTo: document.body,
+    })
+    await waitForEditor(wrapper)
+    return editorInstance(wrapper)
+  }
+
+  async function submitBody() {
+    await wrapper.get('.ProseMirror').trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await flushPromises()
+    return (wrapper.emitted('submit')![0][0] as { body: string }).body
+  }
+
+  it('pastes fenced Markdown as code without adding blank lines', async () => {
+    const editor = await createComposer()
+    const source = 'const answer = 42\n\nconsole.log(answer)'
+    await pasteText(wrapper, `\`\`\`typescript\n${source}\n\`\`\``)
+
+    expect(editor.getJSON().content[0]).toMatchObject({
+      type: 'codeBlock', content: [{ type: 'text', text: source }],
+    })
+    expect(await submitBody()).toBe(`\`\`\`typescript\n${source}\n\`\`\``)
+  })
+
+  it.each([true, false])('uses portable hard breaks for multiline paste (entities=%s)', async (entities) => {
+    await createComposer('', entities)
+    await pasteText(wrapper, 'first\nsecond')
+    expect(await submitBody()).toBe('first  \nsecond')
+  })
+
+  it('keeps nested lists and ordered list numbering through paste and submit', async () => {
+    await createComposer()
+    await pasteText(wrapper, '10. first\n    - nested\n      - deeper\n11. second')
+    const html = renderMarkdownToHtml(await submitBody())
+    const container = document.createElement('div')
+    container.innerHTML = html
+    expect(container.querySelector('ol')?.getAttribute('start')).toBe('10')
+    expect(container.querySelectorAll('ol > li')).toHaveLength(2)
+    expect(container.querySelector('ol > li > ul > li > ul > li')?.textContent).toBe('deeper')
+  })
+
+  it('preserves aligned tables and horizontal rules when editing existing Markdown', async () => {
+    const body = '# Heading\n\n| Left | Right |\n| :--- | ---: |\n| one | two |\n\n---\n\n> quote'
+    const editor = await createComposer(body)
+    expect(editor.getJSON().content.map((node: { type: string }) => node.type))
+      .toEqual(['heading', 'table', 'horizontalRule', 'blockquote'])
+    const container = document.createElement('div')
+    container.innerHTML = renderMarkdownToHtml(await submitBody())
+    expect(container.querySelectorAll('table tr')).toHaveLength(2)
+    expect(container.querySelector('th')?.getAttribute('align')).toBe('left')
+    expect(container.querySelectorAll('th')[1]?.getAttribute('align')).toBe('right')
+    expect(container.querySelector('hr')).toBeTruthy()
+    expect(container.querySelector('blockquote')?.textContent?.trim()).toBe('quote')
+  })
+
+  it('preserves literal punctuation instead of turning it into new formatting', async () => {
+    await createComposer()
+    await pasteText(wrapper, String.raw`\*literal\* and \[label\]`)
+    const container = document.createElement('div')
+    container.innerHTML = renderMarkdownToHtml(await submitBody())
+    expect(container.querySelector('em')).toBeNull()
+    expect(container.textContent?.trim()).toBe('*literal* and [label]')
+  })
+
+  it('preserves literal punctuation and hard breaks in the task-comment composer', async () => {
+    await createComposer('', false, true)
+    await pasteText(wrapper, String.raw`\*literal\*` + '\nnext')
+    const container = document.createElement('div')
+    const body = await submitBody()
+    expect(body).toBe(String.raw`\*literal\*` + '  \nnext')
+    container.innerHTML = renderMarkdownToHtml(body)
+    expect(container.querySelector('em')).toBeNull()
+    expect(container.querySelector('br')).toBeTruthy()
+    expect(container.textContent?.trim()).toBe('*literal*next')
+  })
+
+  it('preserves Markdown link and image titles through paste and submit', async () => {
+    await createComposer()
+    await pasteText(wrapper, '[link](https://example.com "Link title")\n\n![alt](https://example.com/image.png "Image title")')
+    const container = document.createElement('div')
+    container.innerHTML = renderMarkdownToHtml(await submitBody())
+    expect(container.querySelector('a')?.getAttribute('title')).toBe('Link title')
+    expect(container.querySelector('img')?.getAttribute('title')).toBe('Image title')
+  })
+
+  it('preserves inline code inside formatted Markdown links', async () => {
+    await createComposer()
+    await pasteText(wrapper, '**[`README.md`](https://example.com)**')
+    const container = document.createElement('div')
+    container.innerHTML = renderMarkdownToHtml(await submitBody())
+    expect(container.querySelector('a')?.getAttribute('href')).toBe('https://example.com')
+    expect(container.querySelector('a code')?.textContent).toBe('README.md')
+    expect(container.querySelector('strong code')?.textContent).toBe('README.md')
+  })
+
+  it('keeps Markdown inside an existing code block as literal source', async () => {
+    const editor = await createComposer('```text\nexisting\n```')
+    editor.commands.setTextSelection(9)
+    const pasted = '\n**literal**\n- literal'
+    const event = new Event('paste')
+    Object.defineProperty(event, 'clipboardData', { value: {
+      files: [], getData: (format: string) => format === 'text/plain' ? pasted : '',
+    } })
+    editor.view.pasteText(pasted, event)
+    await flushPromises()
+    expect(editor.getJSON().content[0]).toMatchObject({
+      type: 'codeBlock', content: [{ type: 'text', text: `existing${pasted}` }],
+    })
+  })
+
+  it('keeps images and checkbox lists through paste and submit', async () => {
+    const editor = await createComposer()
+    await pasteText(wrapper, '![logo](https://example.com/logo.png)\n\n- [ ] todo\n- [x] done')
+    const blocks = editor.getJSON().content.filter((node: { type: string; content?: unknown[] }) => node.type !== 'paragraph' || node.content?.length)
+    expect(blocks.map((node: { type: string }) => node.type)).toEqual(['image', 'taskList'])
+    const body = await submitBody()
+    expect(body).toContain('![logo](https://example.com/logo.png)')
+    expect(body).toContain('- [ ] todo')
+    expect(body).toContain('- [x] done')
+  })
+
+  it('preserves rich pasted entity metadata instead of flattening it to labels', async () => {
+    const editor = await createComposer()
+    const html = '<p>see <span data-message-entity-kind="task" data-message-entity-id="task-1" data-message-entity-label="@DEV-1 Demo" data-message-entity-href="/tasks/dev-1"><a href="https://example.com/tasks/dev-1">@DEV-1 Demo</a></span></p>'
+    const event = new Event('paste')
+    Object.defineProperty(event, 'clipboardData', { value: {
+      files: [], getData: (format: string) => format === 'text/plain' ? 'see @DEV-1 Demo' : format === 'text/html' ? html : '',
+    } })
+    editor.view.pasteHTML(html, event)
+    await flushPromises()
+    expect(editor.getJSON().content[0].content[1]).toMatchObject({
+      type: 'messageEntity', attrs: { kind: 'task', targetId: 'task-1', href: '/tasks/dev-1' },
+    })
+    await submitBody()
+    expect(wrapper.emitted('submit')![0][0]).toMatchObject({
+      body: 'see @DEV-1 Demo',
+      entities: [{ kind: 'task', targetId: 'task-1', href: '/tasks/dev-1', start: 4, end: 15 }],
+    })
+  })
+
+  it('parses raw Markdown even when a source editor also supplies styled HTML', async () => {
+    const editor = await createComposer()
+    const source = '```html\n<span data-message-entity-kind="task">code</span>\n```'
+    const html = '<div><span>```html</span><br><span>&lt;span data-message-entity-kind="task"&gt;code&lt;/span&gt;</span><br><span>```</span></div>'
+    const event = new Event('paste')
+    Object.defineProperty(event, 'clipboardData', { value: {
+      files: [], getData: (format: string) => format === 'text/plain' ? source : format === 'text/html' ? html : '',
+    } })
+    editor.view.pasteHTML(html, event)
+    await flushPromises()
+    expect(editor.getJSON().content[0]).toMatchObject({
+      type: 'codeBlock', content: [{ type: 'text', text: '<span data-message-entity-kind="task">code</span>' }],
+    })
+    expect(await submitBody()).toBe(source)
+  })
+
+  it('keeps ordinary rich HTML formatting and undoes a paste in one step', async () => {
+    const editor = await createComposer('before')
+    editor.commands.selectAll()
+    const html = '<p><strong>bold </strong>and <a href="https://example.com">https://example.com</a></p>'
+    const event = new Event('paste')
+    Object.defineProperty(event, 'clipboardData', { value: {
+      files: [], getData: (format: string) => format === 'text/plain' ? 'bold and https://example.com' : format === 'text/html' ? html : '',
+    } })
+    editor.view.pasteHTML(html, event)
+    await flushPromises()
+    const container = document.createElement('div')
+    container.innerHTML = renderMarkdownToHtml(await submitBody())
+    expect(container.querySelector('strong')?.textContent).toBe('bold')
+    expect(container.querySelector('a')?.getAttribute('href')).toBe('https://example.com')
+    editor.commands.undo()
+    expect(editor.getText()).toBe('before')
+  })
 })
 
 async function waitForEditor(wrapper: ReturnType<typeof mount>) {

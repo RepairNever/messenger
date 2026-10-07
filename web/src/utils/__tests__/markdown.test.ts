@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderMarkdownToHtml } from '@/utils/markdown'
+import { renderMarkdownToEditorHtml, renderMarkdownToHtml } from '@/utils/markdown'
 
 describe('renderMarkdownToHtml', () => {
   it('keeps code block text unescaped while still rendering raw br tags', () => {
@@ -70,5 +70,32 @@ Line<br>break`)
     expect(html).toContain('logo')
     expect(html).not.toContain('<img src="javascript:')
     expect(html).toContain('<img src="https://example.com/logo.png"')
+  })
+})
+
+describe('renderMarkdownToEditorHtml', () => {
+  it.each(['html', 'js', 'unknown-language'])('preserves the authored %s fence language', (language) => {
+    const source = '<tag> & text\nnext'
+    const root = document.createElement('div')
+    root.innerHTML = renderMarkdownToEditorHtml(`\`\`\`${language}\n${source}\n\`\`\``)
+    expect(root.querySelector('code')?.className).toBe(`language-${language}`)
+    expect(root.querySelector('code')?.textContent).toBe(source)
+    expect(root.querySelector('code span')).toBeNull()
+  })
+
+  it('keeps an unlabeled code fence unlabeled instead of detecting a language', () => {
+    const root = document.createElement('div')
+    root.innerHTML = renderMarkdownToEditorHtml('```\nSELECT id FROM users;\n```')
+    expect(root.querySelector('code')?.className).toBe('')
+    expect(root.querySelector('code')?.textContent).toBe('SELECT id FROM users;')
+  })
+
+  it('uses the same safe link and raw HTML handling as the display renderer', () => {
+    const root = document.createElement('div')
+    root.innerHTML = renderMarkdownToEditorHtml('<script>alert(1)</script>\n\n[unsafe](javascript:alert(1))\n\n[safe](https://example.com)')
+    expect(root.querySelector('script')).toBeNull()
+    expect(root.querySelectorAll('a')).toHaveLength(1)
+    expect(root.querySelector('a')?.getAttribute('href')).toBe('https://example.com')
+    expect(root.textContent).toContain('<script>alert(1)</script>')
   })
 })

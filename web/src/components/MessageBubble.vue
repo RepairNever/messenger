@@ -668,6 +668,7 @@
         Forward message
       </button>
       <button
+        data-testid="message-menu-copy"
         class="w-full rounded px-3 py-2 text-left text-sm text-app-secondaryText hover:bg-app-hover hover:text-app-text transition-colors"
         :disabled="isDeleting"
         @click="copyMessage"
@@ -754,6 +755,7 @@ import { activeEmojiPickerId, createEmojiPickerInstanceId } from '@/stores/emoji
 import { renderMessageBodyWithEntities } from '@/utils/renderMessageEntities'
 import { formatForwardedMessageLabel } from '@/utils/forwardedMessages'
 import { isMessageBodyWithinLimit } from '@/utils/messageLimits'
+import { copyMessageToClipboard } from '@/utils/messageClipboard'
 import RichTextComposer from './RichTextComposer.vue'
 import {
   formatUserCustomStatusTitle,
@@ -2210,9 +2212,13 @@ function toggleContextMenu() {
   showEmojiPicker.value = false
 }
 
-function copyMessage() {
+async function copyMessage() {
   showContextMenu.value = false
-  void navigator.clipboard.writeText(props.message.body)
+  try {
+    await copyMessageToClipboard(props.message.body, props.message.entities ?? [])
+  } catch {
+    chat.showToast('Failed to copy message.')
+  }
 }
 
 // ── Reaction chip styles ─────────────────────────────────────────────────────

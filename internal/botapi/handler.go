@@ -54,7 +54,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/bot/v1/attachments/", h.requireAuth(h.attachmentDownload))
 	// The longer enum lookup prefix wins over the public-ID task router.
 	mux.HandleFunc("/api/bot/v1/tasks/by-enum/", h.requireAuth(h.tasksByEnumValue))
+	mux.HandleFunc("/api/bot/v1/tasks/config", h.requireAuth(h.tasksConfig))
+	mux.HandleFunc("/api/bot/v1/tasks", h.requireAuth(h.tasksCollection))
 	mux.HandleFunc("/api/bot/v1/tasks/", h.requireAuth(h.tasksRouter))
+	mux.HandleFunc("/api/bot/v1/users", h.requireAuth(h.usersLookup))
 	mux.HandleFunc("/api/bot/v1/search/messages", h.requireAuth(h.searchMessages))
 	mux.HandleFunc("/api/bot/v1/search/documents", h.requireAuth(h.searchDocuments))
 	mux.HandleFunc("/api/bot/v1/documents", h.requireAuth(h.documentsCollection))
@@ -520,6 +523,10 @@ func splitTaskPath(rest string) (publicID, sub string, ok bool) {
 }
 
 func (h *Handler) taskItem(w http.ResponseWriter, r *http.Request, p auth.Principal, publicID string) {
+	if r.Method == http.MethodPatch {
+		h.taskUpdate(w, r, p, publicID)
+		return
+	}
 	if r.Method != http.MethodGet {
 		h.methodNotAllowed(w)
 		return

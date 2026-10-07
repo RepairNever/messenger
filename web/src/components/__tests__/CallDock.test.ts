@@ -173,6 +173,27 @@ function createRemoteShareRoom(options?: {
   }
 }
 
+function createRoomWithRemotes(count: number) {
+  return {
+    localParticipant: {
+      sid: 'local-sid',
+      identity: 'user-a',
+      name: 'Ada',
+      getTrackPublication: () => undefined,
+      videoTrackPublications: new Map(),
+      audioTrackPublications: new Map(),
+    },
+    remoteParticipants: new Map(Array.from({ length: count }, (_, i) => [`remote-sid-${i}`, {
+      sid: `remote-sid-${i}`,
+      identity: `user-remote-${i}`,
+      name: `Remote ${i}`,
+      getTrackPublication: () => undefined,
+      videoTrackPublications: new Map(),
+      audioTrackPublications: new Map(),
+    }])),
+  }
+}
+
 function seedCallUserState() {
   const authStore = useAuthStore()
   const chatStore = useChatStore()
@@ -298,6 +319,77 @@ describe('CallDock raised hands', () => {
     expect(wrapper.get('[data-testid="calldock-local-hand-2"]').text()).toContain('2')
     expect(control.attributes('title')).toBe('Lower hand')
     expect(control.attributes('aria-pressed')).toBe('true')
+
+    wrapper.unmount()
+  })
+})
+
+describe('CallDock participant sizing', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('sizes grid columns, stage height and window width by participant count', async () => {
+    seedCallUserState()
+    const callStore = useCallStore()
+    callStore.connected = true
+
+    // 6 participants: 3 columns, 2 rows.
+    callStore.room = createRoomWithRemotes(5) as never
+
+    const wrapper = mount(CallDock, {
+      global: { stubs: { UserAvatar: true } },
+    })
+    await flushAll()
+
+    const dock = wrapper.get('[data-testid="calldock-expanded-root"]').element as HTMLElement
+    expect(dock.className).toContain('cw-window-cols-3')
+
+    const grid = wrapper.get('.cw-grid')
+    expect(grid.classes()).toContain('cw-grid-fixed')
+    expect(grid.classes()).toContain('cw-grid-cols-3')
+    expect((wrapper.get('.cw-stage-zone').element as HTMLElement).style.height).toBe('322px')
+
+    // 9 participants: still 3 columns, 3 rows.
+    callStore.room = createRoomWithRemotes(8) as never
+    await flushAll()
+    expect(dock.className).toContain('cw-window-cols-3')
+    expect(wrapper.get('.cw-grid').classes()).toContain('cw-grid-cols-3')
+    expect((wrapper.get('.cw-stage-zone').element as HTMLElement).style.height).toBe('476px')
+
+    // 10 participants: 4 columns (4+4+2), 3 rows.
+    callStore.room = createRoomWithRemotes(9) as never
+    await flushAll()
+    expect(dock.className).toContain('cw-window-cols-4')
+    expect(wrapper.get('.cw-grid').classes()).toContain('cw-grid-cols-4')
+    expect((wrapper.get('.cw-stage-zone').element as HTMLElement).style.height).toBe('476px')
+
+    // 12 participants: 4 columns (4+4+4), 3 rows.
+    callStore.room = createRoomWithRemotes(11) as never
+    await flushAll()
+    expect(dock.className).toContain('cw-window-cols-4')
+    expect((wrapper.get('.cw-stage-zone').element as HTMLElement).style.height).toBe('476px')
+
+    // 13 participants: 5 columns (5+5+3), 3 rows.
+    callStore.room = createRoomWithRemotes(12) as never
+    await flushAll()
+    expect(dock.className).toContain('cw-window-cols-5')
+    expect(wrapper.get('.cw-grid').classes()).toContain('cw-grid-cols-5')
+    expect((wrapper.get('.cw-stage-zone').element as HTMLElement).style.height).toBe('476px')
+
+    // 16 participants: 5 columns (5+5+5+1), 4 rows — window grows downward.
+    callStore.room = createRoomWithRemotes(15) as never
+    await flushAll()
+    expect(dock.className).toContain('cw-window-cols-5')
+    expect((wrapper.get('.cw-stage-zone').element as HTMLElement).style.height).toBe('630px')
+
+    // Solo call: one narrow column, one row.
+    callStore.room = createRoomWithRemotes(0) as never
+    await flushAll()
+    expect(dock.className).toContain('cw-window-cols-1')
+    expect(wrapper.get('.cw-grid').classes()).toContain('cw-grid-cols-1')
+    expect((wrapper.get('.cw-stage-zone').element as HTMLElement).style.height).toBe('168px')
 
     wrapper.unmount()
   })
@@ -635,7 +727,8 @@ describe('CallDock drag behavior', () => {
     mockElementRect(dock, { width: 240, height: 220 })
 
     const handle = wrapper.get('[data-testid="calldock-expanded-drag-handle"]').element
-    dispatchPointerEvent(handle, 'pointerdown', 680, 500, 1)
+    // Default anchor is top-right, so the grab point sits near the top edge.
+    dispatchPointerEvent(handle, 'pointerdown', 680, 20, 1)
     dispatchPointerEvent(window, 'pointermove', 220, 180, 1)
     dispatchPointerEvent(window, 'pointerup', 220, 180, 1)
     await flushAll()
@@ -646,7 +739,7 @@ describe('CallDock drag behavior', () => {
     wrapper.unmount()
   })
 
-  it('defaults the expanded dock to the bottom-right corner', async () => {
+  it('defaults the expanded dock to the top-right corner', async () => {
     const callStore = useCallStore()
     callStore.connected = true
     callStore.minimized = false
@@ -664,9 +757,9 @@ describe('CallDock drag behavior', () => {
     const dock = wrapper.get('[data-testid="calldock-expanded-root"]').element as HTMLElement
 
     expect(dock.style.right).toBe('0px')
-    expect(dock.style.bottom).toBe('0px')
+    expect(dock.style.top).toBe('0px')
     expect(dock.style.left).toBe('')
-    expect(dock.style.top).toBe('')
+    expect(dock.style.bottom).toBe('')
 
     wrapper.unmount()
   })
@@ -688,7 +781,7 @@ describe('CallDock drag behavior', () => {
 
     const expandedDock = wrapper.get('[data-testid="calldock-expanded-root"]').element as HTMLElement
     mockElementRect(expandedDock, { width: 240, height: 220 })
-    dispatchPointerEvent(wrapper.get('[data-testid="calldock-expanded-drag-handle"]').element, 'pointerdown', 680, 500, 1)
+    dispatchPointerEvent(wrapper.get('[data-testid="calldock-expanded-drag-handle"]').element, 'pointerdown', 680, 20, 1)
     dispatchPointerEvent(window, 'pointermove', 260, 220, 1)
     dispatchPointerEvent(window, 'pointerup', 260, 220, 1)
     await flushAll()
@@ -798,7 +891,7 @@ describe('CallDock drag behavior', () => {
       }),
     })
 
-    dispatchPointerEvent(wrapper.get('[data-testid="calldock-expanded-drag-handle"]').element, 'pointerdown', 680, 500, 1)
+    dispatchPointerEvent(wrapper.get('[data-testid="calldock-expanded-drag-handle"]').element, 'pointerdown', 680, 20, 1)
     dispatchPointerEvent(window, 'pointermove', 260, 220, 1)
     dispatchPointerEvent(window, 'pointerup', 260, 220, 1)
     await flushAll()

@@ -49,6 +49,27 @@ const markdown = new Marked({
   },
 })
 
+// The editor needs the authored language and source, without display-time
+// language detection or highlighting changing the document during a roundtrip.
+const editorMarkdown = new Marked({
+  gfm: true,
+  breaks: true,
+  renderer: {
+    code: (token: Tokens.Code) => {
+      const language = token.lang?.trim().split(/\s+/)[0]
+      const className = language ? ` class="language-${escapeHtml(language)}"` : ''
+      return `<pre><code${className}>${escapeHtml(token.text)}</code></pre>`
+    },
+    html: renderHtmlToken,
+    link: renderLinkToken,
+    image: renderImageToken,
+  },
+})
+
+export function renderMarkdownToEditorHtml(input: string): string {
+  return String(editorMarkdown.parse(input ?? ''))
+}
+
 export function renderMarkdownToHtml(input: string): string {
   return String(markdown.parse(input ?? ''))
 }

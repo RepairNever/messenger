@@ -457,6 +457,55 @@ describe('MessageBubble reactions', () => {
     pendingWrapper.unmount()
   })
 
+  describe('Copy message', () => {
+    let clipboardDescriptor: PropertyDescriptor | undefined
+    const writeText = vi.fn()
+
+    beforeEach(() => {
+      clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+      writeText.mockReset().mockResolvedValue(undefined)
+    })
+
+    afterEach(() => {
+      if (clipboardDescriptor) Object.defineProperty(navigator, 'clipboard', clipboardDescriptor)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+    })
+
+    async function copyMessage(body: string) {
+      const wrapper = mount(MessageBubble, {
+        props: { message: buildMessage({ body, reactions: [], myReactions: [] }), showHeader: true },
+        attachTo: document.body,
+      })
+      await wrapper.get('button[title="More actions"]').trigger('click')
+      await flushAll()
+      ;(document.body.querySelector('[data-testid="message-menu-copy"]') as HTMLButtonElement).click()
+      await flushAll()
+      wrapper.unmount()
+    }
+
+    it('copies the original Markdown body without whitespace or entity conversion', async () => {
+      const body = '\n# Title\n\n**bold**\n\n- one\n  - nested\n\n```ts\nconst value = "<tag>"\n```\n\n| A | B |\n| - | - |\n| one | two |\n  '
+      await copyMessage(body)
+      expect(writeText).toHaveBeenCalledWith(body)
+      expect(document.body.querySelector('[data-testid="message-menu-copy"]')).toBeNull()
+    })
+
+    it('shows a visible error when clipboard writing rejects', async () => {
+      const chat = useChatStore()
+      writeText.mockRejectedValueOnce(new Error('permission denied'))
+      await copyMessage('**raw**')
+      expect(chat.toast?.message).toBe('Failed to copy message.')
+    })
+
+    it('shows a visible error when the clipboard is unavailable', async () => {
+      const chat = useChatStore()
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+      await copyMessage('**raw**')
+      expect(chat.toast?.message).toBe('Failed to copy message.')
+    })
+  })
+
   it('shows forward action for confirmed messages and hides it for pending messages', async () => {
     const confirmed = buildMessage({ reactions: [], myReactions: [] })
     const confirmedWrapper = mount(MessageBubble, {
@@ -609,6 +658,27 @@ describe('MessageBubble reactions', () => {
     wrapper.unmount()
   })
 
+  it('preserves tables and separators when editing a displayed Markdown message', async () => {
+    useAuthStore().user = { id: 'user-1', email: 'u1@example.com', displayName: 'U1', role: 'member' }
+    const body = '| A | B |\n| --- | --- |\n| one | two |\n\n---\n\nAfter'
+    const wrapper = mount(MessageBubble, {
+      props: {
+        message: buildMessage({ senderId: 'user-1', body, reactions: [], myReactions: [] }),
+        showHeader: true,
+        editRequestToken: 1,
+      },
+      attachTo: document.body,
+    })
+    await waitForEditComposer(wrapper)
+    expect(editProse(wrapper).find('table').exists()).toBe(true)
+    expect(editProse(wrapper).find('hr').exists()).toBe(true)
+    await appendEditText(wrapper, ' edited')
+    await editProse(wrapper).trigger('keydown', { key: 'Enter', ctrlKey: true })
+    await flushAll()
+    expect(chatApiMocks.editMessage).toHaveBeenCalledWith('message-1', `${body} edited`, [])
+    wrapper.unmount()
+  })
+
   it('does not save an inline edit while a task URL paste is resolving', async () => {
     const auth = useAuthStore()
     const chat = useChatStore()
@@ -754,7 +824,7 @@ describe('MessageBubble reactions', () => {
     await editor.trigger('keydown', { key: 'Enter' })
     await flushAll()
 
-    expect(chatApiMocks.editMessage).toHaveBeenCalledWith('message-1', 'line 1\nline 2', [])
+    expect(chatApiMocks.editMessage).toHaveBeenCalledWith('message-1', 'line 1  \nline 2', [])
     wrapper.unmount()
   })
 

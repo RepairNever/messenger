@@ -28,7 +28,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Editor as TiptapEditor, JSONContent } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
+import Code from '@tiptap/extension-code'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
+import { Table } from '@tiptap/extension-table'
+import TableRow from '@tiptap/extension-table-row'
+import TableHeader from '@tiptap/extension-table-header'
+import TableCell from '@tiptap/extension-table-cell'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import type { MessageEntity } from '@/stores/chat'
 import { searchTagEntities, type TagSearchResponse } from '@/services/http/chatApi'
@@ -41,16 +46,47 @@ import {
   removePendingPasteCandidate,
   removePendingPasteCandidateFromTransaction,
 } from '@/editor/pendingPasteCandidates'
-import { renderMarkdownToHtml } from '@/utils/markdown'
-import { renderTaskMarkdownToHtml } from '@/utils/taskMarkdown'
 import { tiptapJsonToMarkdown } from '@/utils/tiptapMarkdown'
 import { MessageEntityNode } from '@/editor/messageEntity'
+import { MessageImageNode } from '@/editor/messageImage'
 import { FenceOnEnterExtension, shouldSubmitOnEnter } from '@/editor/richTextShortcuts'
 import { renderMessageEditorHtml, tiptapJsonToMessagePayload } from '@/utils/messageRichText'
 import { buildTaskMentionHref, buildTaskMentionLabel } from '@/utils/descriptionMentions'
 import { findStandaloneCurrentWorkspaceTaskUrl } from '@/utils/taskUrlMention'
 import MessageTagPicker, { type MessageTagPickerItem } from './MessageTagPicker.vue'
 import { userCustomStatusFromDto } from '@/types/userStatus'
+import { hasMarkdownSyntax, normalizeEditorMarkdownHtml, renderEditorMarkdownHtml } from '@/utils/editorMarkdown'
+
+const tableAlignmentAttribute = {
+  default: null,
+  parseHTML: (element: HTMLElement) => {
+    const alignment = element.style.textAlign || element.getAttribute('align')
+    return alignment && ['left', 'center', 'right'].includes(alignment) ? alignment : null
+  },
+  renderHTML: (attributes: Record<string, unknown>) => (
+    ['left', 'center', 'right'].includes(String(attributes.textAlign))
+      ? { style: `text-align: ${attributes.textAlign}` }
+      : {}
+  ),
+}
+
+const ComposerTableHeader = TableHeader.extend({
+  addAttributes() {
+    return { ...this.parent?.(), textAlign: tableAlignmentAttribute }
+  },
+})
+
+const ComposerTableCell = TableCell.extend({
+  addAttributes() {
+    return { ...this.parent?.(), textAlign: tableAlignmentAttribute }
+  },
+})
+
+const ComposerLink = Link.extend({
+  addAttributes() {
+    return { ...this.parent?.(), title: { default: null } }
+  },
+})
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -172,12 +208,9 @@ const flatTagItems = computed(() => [
 
 function renderValueAsHtml(body: string, nextEntities: MessageEntity[]): string {
   if (props.enableMessageEntities) {
-    return renderMessageEditorHtml(body, nextEntities)
+    return normalizeEditorMarkdownHtml(renderMessageEditorHtml(body, nextEntities))
   }
-  if (props.enableTaskItems) {
-    return renderTaskMarkdownToHtml(body)
-  }
-  return renderMarkdownToHtml(body)
+  return renderEditorMarkdownHtml(body)
 }
 
 function closeTagPicker() {
@@ -282,7 +315,7 @@ function serializeCurrentState(doc: JSONContent | null | undefined = editor.valu
     return tiptapJsonToMessagePayload(doc)
   }
   return {
-    body: tiptapJsonToMarkdown(doc),
+    body: tiptapJsonToMarkdown(doc, { escapeText: true, normalizeLegacyEscapes: false, preserveImageTitle: true }),
     entities: [] as MessageEntity[],
   }
 }
@@ -381,24 +414,25 @@ const editor = useEditor({
   extensions: [
     StarterKit.configure({
       link: false,
+      code: false,
     }),
-    Link.configure({
+    Code.extend({ excludes: '' }),
+    ComposerLink.configure({
       openOnClick: false,
       autolink: false,
       defaultProtocol: 'https',
     }),
     FenceOnEnterExtension,
-    ...(props.enableTaskItems
-      ? [
-          TaskList,
-          TaskItem.configure({
-            nested: true,
-            HTMLAttributes: {
-              'data-type': 'taskItem',
-            },
-          }),
-        ]
-      : []),
+    Table.configure({ resizable: false }),
+    TableRow,
+    ComposerTableHeader,
+    ComposerTableCell,
+    MessageImageNode,
+    TaskList,
+    TaskItem.configure({
+      nested: true,
+      HTMLAttributes: { 'data-type': 'taskItem' },
+    }),
     ...(props.enableMessageEntities ? [MessageEntityNode] : []),
     ...(props.enableMessageEntities ? [PendingPasteCandidatesExtension] : []),
   ],
@@ -408,6 +442,7 @@ const editor = useEditor({
     attributes: {
       class: 'rich-text-composer__content min-h-[24px] whitespace-pre-wrap break-words bg-transparent text-sm leading-relaxed text-app-text outline-none',
     },
+    transformPastedHTML: normalizeEditorMarkdownHtml,
     handleKeyDown(_view, event) {
       if (tagPickerOpen.value) {
         if (event.key === 'ArrowDown') {
@@ -482,14 +517,25 @@ const editor = useEditor({
         return true
       }
 
-      if (!props.enableMessageEntities || props.disabled || editor.value?.isActive('code') || editor.value?.isActive('codeBlock')) {
+      if (props.disabled || editor.value?.isActive('code') || editor.value?.isActive('codeBlock')) {
         return false
       }
 
       const pastedText = event.clipboardData?.getData('text/plain') ?? ''
+      const pastedHtml = event.clipboardData?.getData('text/html') ?? ''
+      const clipboardTemplate = document.createElement('template')
+      clipboardTemplate.innerHTML = pastedHtml
+      const hasEntityMarkup = Boolean(clipboardTemplate.content.querySelector('span[data-message-entity-kind][data-message-entity-id]'))
       const currentWorkspaceOrigin = `${window.location.protocol}//${window.location.host}`
-      const taskUrl = findStandaloneCurrentWorkspaceTaskUrl(pastedText, currentWorkspaceOrigin)
-      if (!taskUrl) return false
+      const taskUrl = props.enableMessageEntities && !hasEntityMarkup
+        ? findStandaloneCurrentWorkspaceTaskUrl(pastedText, currentWorkspaceOrigin)
+        : null
+      if (!taskUrl) {
+        if (pastedHtml && (hasEntityMarkup || !hasMarkdownSyntax(pastedText))) return false
+        if (!pastedText) return false
+        event.preventDefault()
+        return editor.value?.commands.insertContent(renderValueAsHtml(pastedText, [])) ?? false
+      }
 
       event.preventDefault()
       const { from, to } = view.state.selection
@@ -778,6 +824,44 @@ defineExpose<{
 .rich-text-composer :deep(.ProseMirror pre code) {
   background: transparent;
   padding: 0;
+}
+
+.rich-text-composer :deep(.ProseMirror table) {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.rich-text-composer :deep(.ProseMirror th),
+.rich-text-composer :deep(.ProseMirror td) {
+  border: 1px solid rgb(var(--color-divider));
+  padding: 0.25rem 0.5rem;
+  vertical-align: top;
+}
+
+.rich-text-composer :deep(.ProseMirror img) {
+  max-width: 100%;
+  height: auto;
+}
+
+.rich-text-composer :deep(.ProseMirror hr) {
+  margin: 0.5rem 0;
+  border-color: rgb(var(--color-divider));
+}
+
+.rich-text-composer :deep(.ProseMirror ul[data-type='taskList']) {
+  list-style: none;
+  padding-left: 0;
+}
+
+.rich-text-composer :deep(.ProseMirror li[data-type='taskItem']) {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.rich-text-composer :deep(.ProseMirror li[data-type='taskItem'] > div) {
+  flex: 1;
+  min-width: 0;
 }
 
 .rich-text-composer :deep(.ProseMirror.is-empty::before) {

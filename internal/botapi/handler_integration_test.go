@@ -329,7 +329,7 @@ func TestIntegration_BotAPI_EventsMembershipPagingAndGap(t *testing.T) {
 		_, err = env.chat.SendMessage(ctx, chat.SendMessageParams{
 			ChannelID:   memberChannel,
 			SenderID:    human,
-			ClientMsgID: "evt-" + bodyText,
+			ClientMsgID: "evt-" + strings.ReplaceAll(bodyText, " ", "-"),
 			Body:        bodyText,
 		})
 		require.NoError(t, err)

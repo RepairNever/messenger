@@ -1,7 +1,7 @@
 import type { JSONContent } from '@tiptap/core'
 import type { MessageEntity } from '@/stores/chat'
 import { escapeHtml } from '@/utils/html'
-import { renderMarkdownToHtml } from '@/utils/markdown'
+import { renderMarkdownToEditorHtml } from '@/utils/markdown'
 import { tiptapJsonToMarkdown } from '@/utils/tiptapMarkdown'
 
 interface PlaceholderEntity {
@@ -54,7 +54,11 @@ export function tiptapJsonToMessagePayload(doc: JSONContent | null | undefined):
 
   const placeholders: PlaceholderEntity[] = []
   const cloned = cloneNode(doc, placeholders)
-  let body = tiptapJsonToMarkdown(cloned, { hardBreakStyle: 'newline' })
+  let body = tiptapJsonToMarkdown(cloned, {
+    escapeText: true,
+    normalizeLegacyEscapes: false,
+    preserveImageTitle: true,
+  })
   const entities: MessageEntity[] = []
 
   for (const placeholder of placeholders) {
@@ -76,7 +80,7 @@ export function tiptapJsonToMessagePayload(doc: JSONContent | null | undefined):
 
 export function renderMessageEditorHtml(body: string, entities: MessageEntity[]): string {
   if (!body) return ''
-  if (!entities.length) return renderMarkdownToHtml(body)
+  if (!entities.length) return renderMarkdownToEditorHtml(body)
 
   const sorted = [...entities].sort((a, b) => a.start - b.start)
   let cursor = 0
@@ -93,7 +97,7 @@ export function renderMessageEditorHtml(body: string, entities: MessageEntity[])
 
   nextBody += body.slice(cursor)
 
-  let html = renderMarkdownToHtml(nextBody)
+  let html = renderMarkdownToEditorHtml(nextBody)
   sorted.forEach((entity, index) => {
     const token = `MSGNRENTITYTOKEN${index}END`
     const replacement = `<span data-message-entity-kind="${escapeHtml(entity.kind)}" data-message-entity-id="${escapeHtml(entity.targetId)}" data-message-entity-label="${escapeHtml(entity.label)}" data-message-entity-href="${escapeHtml(entity.href)}" class="message-entity-chip">${escapeHtml(entity.label)}</span>`
