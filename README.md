@@ -65,6 +65,15 @@ cd web && npm run build       # Frontend (vue-tsc + vite build, generates SW)
 cd web && npm run tauri:build # macOS desktop bundle (Tauri v2 shell)
 ```
 
+On macOS, the desktop build checks that the selected SDK can link with the installed
+Command Line Tools and falls back to a compatible installed SDK when needed. Set
+`SDKROOT` explicitly to use a particular SDK.
+
+macOS builds also enable `CI=true` by default to skip Finder automation when
+packaging the DMG, and show verbose packaging diagnostics. The installer still
+includes the app and Applications shortcut. Set `CI=false` explicitly to retain
+Finder's icon layout customization.
+
 ### Run Tests
 ```bash
 make test                     # Go tests (unit + integration via Testcontainers)

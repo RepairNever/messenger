@@ -375,7 +375,7 @@ func (s *Service) CreateChannel(ctx context.Context, p CreateChannelParams) (Cha
 		return ChannelRow{}, fmt.Errorf("%w: private channels require at least one member", ErrBadRequest)
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return ChannelRow{}, fmt.Errorf("admin: begin create channel tx: %w", err)
 	}
@@ -597,7 +597,7 @@ func (s *Service) RenameChannel(ctx context.Context, channelID uuid.UUID, name s
 		return ChannelRow{}, fmt.Errorf("%w: name required", ErrBadRequest)
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return ChannelRow{}, fmt.Errorf("admin: begin rename channel tx: %w", err)
 	}

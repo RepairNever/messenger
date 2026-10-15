@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { create } from '@bufbuild/protobuf'
+import { create, type MessageInitShape } from '@bufbuild/protobuf'
 import { nextTick, watch } from 'vue'
 import { useChatStore, type Message } from '@/stores/chat'
 import { useWsStore } from '@/stores/ws'
@@ -25,6 +25,7 @@ import {
   MessageEventSchema,
   MessageAttachmentSchema,
   SendMessageAckSchema,
+  ReadCursorAckSchema,
   SubscribeThreadResponseSchema,
   NotificationAddedEventSchema,
   NotificationSummarySchema,
@@ -37,6 +38,7 @@ import {
   ThreadSummaryUpdatedEventSchema,
   TaskStatusChangedEventSchema,
   TaskCommentCreatedEventSchema,
+  SpreadsheetChangedEventSchema,
   ConversationUpsertedEventSchema,
   ServerEventSchema,
   PresenceEventSchema,
@@ -151,6 +153,35 @@ function buildSequencedMessageEvent(eventSeq: bigint, messageId = `message-${eve
         mentionedUserIds: [],
         mentionEveryone: false,
       }),
+    },
+  })
+}
+
+function buildRootHistoryPage(conversationId: string, sequence: bigint, body = 'loaded root') {
+  return {
+    messages: [{
+      id: `root-${sequence}`,
+      conversation_id: conversationId,
+      sender_id: 'user-2',
+      sender_name: 'Bob',
+      body,
+      channel_seq: sequence.toString(),
+      thread_seq: '0',
+      thread_root_message_id: '',
+      mention_everyone: false,
+      created_at: '2026-10-08T00:00:00Z',
+    }],
+    has_more: false,
+    page_size: 50,
+    next_before_channel_seq: '',
+  }
+}
+
+function buildReadCounterEvent(counter: MessageInitShape<typeof UnreadCounterSchema>) {
+  return create(ServerEventSchema, {
+    payload: {
+      case: 'readCounterUpdated',
+      value: create(ReadCounterUpdatedEventSchema, { counter: create(UnreadCounterSchema, counter) }),
     },
   })
 }
@@ -1202,10 +1233,10 @@ describe('chatStore phase 6 flows', () => {
     expect(ws.sendSyncSince).not.toHaveBeenCalled()
   })
 
-  it('sends UpdateReadCursor when selecting a conversation with unread messages', () => {
+  it('sends UpdateReadCursor after loading the selected unread conversation', async () => {
     const chat = useChatStore()
     const ws = useWsStore()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
 
     chat.channels = [{
       id: 'channel-1',
@@ -1217,16 +1248,17 @@ describe('chatStore phase 6 flows', () => {
       notificationLevel: NotificationLevel.ALL,
     }]
 
-    chat.selectChannel('channel-1')
+    chatApiMocks.listConversationMessages.mockResolvedValue(buildRootHistoryPage('channel-1', 12n))
+    await chat.selectChannel('channel-1')
 
     expect(ws.sendUpdateReadCursor).toHaveBeenCalledWith('channel-1', 12n)
-    expect(chat.channels[0].unread).toBe(0)
+    expect(chat.channels[0].unread).toBe(3)
   })
 
-  it('defers read mark for opened conversation while tab is hidden and flushes on focus', () => {
+  it('defers read mark for opened conversation while tab is hidden and flushes on focus', async () => {
     const chat = useChatStore()
     const ws = useWsStore()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
     chat.setClientActive(false)
 
     chat.channels = [{
@@ -1239,7 +1271,8 @@ describe('chatStore phase 6 flows', () => {
       notificationLevel: NotificationLevel.ALL,
     }]
 
-    chat.selectChannel('channel-1')
+    chatApiMocks.listConversationMessages.mockResolvedValue(buildRootHistoryPage('channel-1', 12n))
+    await chat.selectChannel('channel-1')
 
     expect(ws.sendUpdateReadCursor).not.toHaveBeenCalled()
     expect(chat.channels[0].unread).toBe(3)
@@ -1248,7 +1281,7 @@ describe('chatStore phase 6 flows', () => {
     chat.onClientFocus()
 
     expect(ws.sendUpdateReadCursor).toHaveBeenCalledWith('channel-1', 12n)
-    expect(chat.channels[0].unread).toBe(0)
+    expect(chat.channels[0].unread).toBe(3)
   })
 
   it('updates live presence for direct messages', () => {
@@ -1270,6 +1303,507 @@ describe('chatStore phase 6 flows', () => {
 
     expect(chat.presenceByUserId['user-2']?.effectivePresence).toBe(PresenceStatus.ONLINE)
     expect(chat.directMessages[0].presence).toBe('online')
+  })
+
+  it('reloads an initialized unread DM on explicit open and reads only loaded roots', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, lastMessageSeq: 1n, notificationLevel: NotificationLevel.ALL }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 1n))
+    await chat.ensureConversationHistory('dm-1')
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1 }))
+    let resolveLatest!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    chatApiMocks.listConversationMessages.mockReturnValueOnce(new Promise(resolve => { resolveLatest = resolve }))
+
+    const opening = chat.selectChannel('dm-1')
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(2)
+    expect(ws.sendUpdateReadCursor).not.toHaveBeenCalled()
+    expect(chat.directMessages[0].unread).toBe(1)
+    resolveLatest(buildRootHistoryPage('dm-1', 2n, 'previously missing message'))
+    await opening
+
+    expect(chat.messages['dm-1'].map(message => message.body)).toContain('previously missing message')
+    expect(chat.directMessages[0].lastMessageSeq).toBe(2n)
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 2n)
+    expect(chat.directMessages[0].unread).toBe(1)
+  })
+
+  it('keeps unread after failed history and never reads an unseen summary on focus or feed refresh', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.bootstrapped = true
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 2, lastMessageSeq: 50n, notificationLevel: NotificationLevel.ALL }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 1n))
+    await chat.ensureConversationHistory('dm-1')
+    chatApiMocks.listConversationMessages.mockRejectedValueOnce(new Error('history unavailable'))
+
+    await chat.selectChannel('dm-1')
+    chat.onClientFocus()
+    await chat.refreshUnreadFeed()
+
+    expect(ws.sendUpdateReadCursor).not.toHaveBeenCalled()
+    expect(chat.directMessages[0].unread).toBe(2)
+    expect(chat.directMessages[0].lastMessageSeq).toBe(50n)
+  })
+
+  it.each(['initial', 'latest'])('reads only the returned page frontier when a live root arrives during the %s history request', async (loadKind) => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.bootstrapped = true
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    if (loadKind === 'latest') {
+      chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 10n))
+      await chat.ensureConversationHistory('dm-1')
+    }
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 2, revision: 1n, lastReadSeq: 10n, lastMessageSeq: 12n, lastRootMessageSeq: 12n }))
+    let resolvePage!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    chatApiMocks.listConversationMessages.mockReturnValueOnce(new Promise(resolve => { resolvePage = resolve }))
+    const opening = chat.selectChannel('dm-1')
+    chat.handleServerEvent(create(ServerEventSchema, {
+      eventSeq: 1n, eventId: 'live-root-12',
+      payload: { case: 'messageCreated', value: create(MessageEventSchema, { conversationId: 'dm-1', messageId: 'root-12', senderId: 'user-2', channelSeq: 12n, body: 'later live root' }) },
+    }))
+    expect(ws.sendUpdateReadCursor).not.toHaveBeenCalled()
+    expect(chat.directMessages[0].unread).toBe(2)
+
+    resolvePage(buildRootHistoryPage('dm-1', 11n, 'earlier missing root'))
+    await opening
+
+    expect(chat.messages['dm-1'].some(message => message.channelSeq === 11n)).toBe(true)
+    expect(chat.messages['dm-1'].some(message => message.channelSeq === 12n)).toBe(true)
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 11n)
+    chat.onClientFocus()
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledTimes(1)
+    expect(chat.directMessages[0].unread).toBe(2)
+
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 12n))
+    await chat.selectChannel('dm-1')
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledTimes(2)
+    expect(ws.sendUpdateReadCursor).toHaveBeenLastCalledWith('dm-1', 12n)
+  })
+
+  it('keeps an unseen earlier root unread when live messages and notifications arrive after history failed', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.bootstrapped = true
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 10n))
+    await chat.ensureConversationHistory('dm-1')
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 2, revision: 1n, lastReadSeq: 10n, lastMessageSeq: 12n, lastRootMessageSeq: 12n }))
+    chatApiMocks.listConversationMessages.mockRejectedValueOnce(new Error('latest history failed'))
+    await chat.selectChannel('dm-1')
+    chatApiMocks.listConversationMessages.mockRejectedValueOnce(new Error('live recovery failed'))
+    chat.handleServerEvent(create(ServerEventSchema, {
+      eventSeq: 1n, eventId: 'live-root-after-failure',
+      payload: { case: 'messageCreated', value: create(MessageEventSchema, { conversationId: 'dm-1', messageId: 'root-12', senderId: 'user-2', channelSeq: 12n }) },
+    }))
+    chat.handleServerEvent(create(ServerEventSchema, {
+      payload: { case: 'notificationAdded', value: create(NotificationAddedEventSchema, {
+        notification: create(NotificationSummarySchema, { notificationId: 'root-12-notification', conversationId: 'dm-1', messageId: 'root-12' }),
+      }) },
+    }))
+    await chat.ensureConversationHistory('dm-1')
+    chat.onClientFocus()
+    expect(ws.sendUpdateReadCursor).not.toHaveBeenCalled()
+    expect(chat.directMessages[0].unread).toBe(2)
+
+    let resolveRecovery!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    chatApiMocks.listConversationMessages
+      .mockResolvedValueOnce(buildRootHistoryPage('dm-1', 11n))
+      .mockReturnValueOnce(new Promise(resolve => { resolveRecovery = resolve }))
+    await chat.selectChannel('dm-1')
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 11n)
+    expect(chat.directMessages[0].unread).toBe(2)
+
+    resolveRecovery(buildRootHistoryPage('dm-1', 12n))
+    await vi.waitFor(() => expect(ws.sendUpdateReadCursor).toHaveBeenLastCalledWith('dm-1', 12n))
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledTimes(2)
+    expect(ws.sendUpdateReadCursor).toHaveBeenLastCalledWith('dm-1', 12n)
+  })
+
+  it('does not flush a hidden live-root pending cursor on focus while history is loading', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.setClientActive(false)
+    chat.bootstrapped = true
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 2, revision: 1n, lastReadSeq: 10n, lastMessageSeq: 12n, lastRootMessageSeq: 12n }))
+    let resolvePage!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    chatApiMocks.listConversationMessages.mockReturnValueOnce(new Promise(resolve => { resolvePage = resolve }))
+    const opening = chat.selectChannel('dm-1')
+    chat.handleServerEvent(create(ServerEventSchema, {
+      eventSeq: 1n, eventId: 'hidden-live-root-12',
+      payload: { case: 'messageCreated', value: create(MessageEventSchema, { conversationId: 'dm-1', messageId: 'root-12', senderId: 'user-2', channelSeq: 12n }) },
+    }))
+    chat.setClientActive(true)
+    chat.onClientFocus()
+    expect(ws.sendUpdateReadCursor).not.toHaveBeenCalled()
+
+    resolvePage(buildRootHistoryPage('dm-1', 11n))
+    await opening
+    chat.onClientFocus()
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 11n)
+
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 12n))
+    await chat.selectChannel('dm-1')
+    chat.onClientFocus()
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledTimes(2)
+    expect(ws.sendUpdateReadCursor).toHaveBeenLastCalledWith('dm-1', 12n)
+  })
+
+  it('joins the current history request when the unread DM is opened twice', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 1, notificationLevel: NotificationLevel.ALL }]
+    let resolvePage!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    chatApiMocks.listConversationMessages.mockReturnValue(new Promise(resolve => { resolvePage = resolve }))
+
+    const first = chat.selectChannel('dm-1')
+    const second = chat.selectChannel('dm-1')
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(1)
+    expect(ws.sendUpdateReadCursor).not.toHaveBeenCalled()
+    resolvePage(buildRootHistoryPage('dm-1', 7n))
+    await Promise.all([first, second])
+
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 7n)
+    expect(chat.directMessages[0].lastMessageSeq).toBe(7n)
+  })
+
+  it('does not read an unread DM when its successful history page is empty', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 1, lastMessageSeq: 100n, notificationLevel: NotificationLevel.ALL }]
+    chatApiMocks.listConversationMessages.mockResolvedValue({ messages: [], has_more: false, page_size: 50 })
+
+    await chat.selectChannel('dm-1')
+
+    expect(ws.sendUpdateReadCursor).not.toHaveBeenCalled()
+    expect(chat.directMessages[0].unread).toBe(1)
+  })
+
+  it('keeps the server unread count when a partial cursor ACK arrives', () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    const ackRegistration = vi.spyOn(ws, 'onReadCursorAck')
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 1, notificationLevel: NotificationLevel.ALL }]
+    chat.registerWsHandlers()
+    ackRegistration.mock.calls[0]![0](create(ReadCursorAckSchema, { conversationId: 'dm-1', lastReadSeq: 1n }))
+
+    expect(chat.directMessages[0].unread).toBe(1)
+  })
+
+  it.each([
+    { newerCount: 0, olderCount: 1 },
+    { newerCount: 1, olderCount: 0 },
+  ])('ignores an older counter revision with unread=$olderCount after unread=$newerCount at the same read cursor', ({ newerCount, olderCount }) => {
+    const chat = useChatStore()
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: newerCount, revision: 2n, lastReadSeq: 5n, lastMessageSeq: 8n, lastRootMessageSeq: 7n }))
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: olderCount, revision: 1n, lastReadSeq: 5n, lastMessageSeq: 6n, lastRootMessageSeq: 6n }))
+
+    expect(chat.directMessages[0].unread).toBe(newerCount)
+    expect(chat.directMessages[0].lastMessageSeq).toBe(8n)
+    expect(chat.directMessages[0].lastRootMessageSeq).toBe(7n)
+  })
+
+  it('accepts legacy counters before the first versioned snapshot and ignores them afterwards', () => {
+    const chat = useChatStore()
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1 }))
+    expect(chat.directMessages[0].unread).toBe(1)
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 0, revision: 1n }))
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 2 }))
+    expect(chat.directMessages[0].unread).toBe(0)
+
+    chat.resetRuntimeState()
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 2 }))
+    expect(chat.directMessages[0].unread).toBe(2)
+  })
+
+  it('keeps newer direct unread counters when paged bootstrap applies an older snapshot', () => {
+    const chat = useChatStore()
+    chat.handleBootstrapResponse(create(BootstrapResponseSchema, {
+      pageIndex: 0, hasMore: true, snapshotSeq: 1n,
+      conversations: [create(ConversationSummarySchema, { conversationId: 'dm-1', conversationType: 1, topic: 'user-2', title: 'Bob', lastMessageSeq: 1n })],
+      unread: [create(UnreadCounterSchema, { conversationId: 'dm-1', unreadMessages: 0, revision: 1n, lastMessageSeq: 1n })],
+    }))
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, revision: 2n, lastMessageSeq: 2n, lastRootMessageSeq: 2n }))
+    chat.handleBootstrapResponse(create(BootstrapResponseSchema, { pageIndex: 1, hasMore: false, snapshotSeq: 1n }))
+
+    expect(chat.directMessages[0].unread).toBe(1)
+    expect(chat.directMessages[0].lastMessageSeq).toBe(2n)
+    expect(chat.directMessages[0].lastRootMessageSeq).toBe(2n)
+  })
+
+  it('recovers a missing root from an accepted counter in the visible initialized DM without repeated reads', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.bootstrapped = true
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, lastMessageSeq: 1n, notificationLevel: NotificationLevel.ALL }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 1n))
+    await chat.selectChannel('dm-1')
+    vi.mocked(ws.sendUpdateReadCursor).mockClear()
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 2n, 'recovered root'))
+
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, revision: 1n, lastReadSeq: 1n, lastMessageSeq: 3n, lastRootMessageSeq: 2n }))
+    await chat.ensureConversationHistory('dm-1')
+    await chat.refreshUnreadFeed()
+    chat.onClientFocus()
+
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(2)
+    expect(chat.messages['dm-1'].map(message => message.body)).toContain('recovered root')
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 2n)
+    expect(chat.directMessages[0].lastMessageSeq).toBe(3n)
+    expect(chat.directMessages[0].unread).toBe(1)
+  })
+
+  it('retries a read that was not sent when focus returns without clearing unread', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(false)
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 1, notificationLevel: NotificationLevel.ALL }]
+    chatApiMocks.listConversationMessages.mockResolvedValue(buildRootHistoryPage('dm-1', 2n))
+    await chat.selectChannel('dm-1')
+    vi.mocked(ws.sendUpdateReadCursor).mockClear().mockReturnValue(true)
+
+    chat.onClientFocus()
+    chat.onClientFocus()
+
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 2n)
+    expect(chat.directMessages[0].unread).toBe(1)
+  })
+
+  it('retries an unconfirmed sent cursor on an explicit unread open while focus and feed refresh stay deduplicated', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.bootstrapped = true
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 1, notificationLevel: NotificationLevel.ALL }]
+    chatApiMocks.listConversationMessages.mockResolvedValue(buildRootHistoryPage('dm-1', 2n))
+    await chat.selectChannel('dm-1')
+    chat.onClientFocus()
+    await chat.refreshUnreadFeed()
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledTimes(1)
+
+    await chat.selectChannel('dm-1')
+
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(2)
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledTimes(2)
+    expect(ws.sendUpdateReadCursor).toHaveBeenLastCalledWith('dm-1', 2n)
+    expect(chat.directMessages[0].unread).toBe(1)
+  })
+
+  it('catches up and clears unread in the open DM when the counter overtakes an in-flight history page', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.bootstrapped = true
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', revision: 1n, lastReadSeq: 10n, lastRootMessageSeq: 10n, lastMessageSeq: 10n }))
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 10n))
+    await chat.selectChannel('dm-1')
+
+    let resolveFirst!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    let resolveCatchUp!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    chatApiMocks.listConversationMessages
+      .mockReturnValueOnce(new Promise(resolve => { resolveFirst = resolve }))
+      .mockReturnValueOnce(new Promise(resolve => { resolveCatchUp = resolve }))
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, revision: 2n, lastReadSeq: 10n, lastRootMessageSeq: 11n, lastMessageSeq: 11n }))
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 2, revision: 3n, lastReadSeq: 10n, lastRootMessageSeq: 12n, lastMessageSeq: 12n }))
+    chat.handleServerEvent(create(ServerEventSchema, {
+      eventSeq: 1n, eventId: 'live-during-catch-up',
+      payload: { case: 'messageCreated', value: create(MessageEventSchema, { conversationId: 'dm-1', messageId: 'root-12', senderId: 'user-2', channelSeq: 12n }) },
+    }))
+    resolveFirst(buildRootHistoryPage('dm-1', 11n))
+    await vi.waitFor(() => expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(3))
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 11n)
+    expect(chat.activeChannelId).toBe('dm-1')
+    expect(chat.directMessages[0].unread).toBe(2)
+
+    resolveCatchUp(buildRootHistoryPage('dm-1', 12n))
+    await vi.waitFor(() => expect(ws.sendUpdateReadCursor).toHaveBeenLastCalledWith('dm-1', 12n))
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 0, revision: 5n, lastReadSeq: 12n, lastRootMessageSeq: 12n, lastMessageSeq: 12n }))
+    expect(chat.directMessages[0].unread).toBe(0)
+    expect(chat.activeChannelId).toBe('dm-1')
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(3)
+  })
+
+  it('retries a loaded visible read once when a newer counter still has an older confirmed cursor', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.bootstrapped = true
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 12n))
+    await chat.selectChannel('dm-1')
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledTimes(1)
+    const counter = buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, revision: 2n, lastReadSeq: 11n, lastRootMessageSeq: 12n, lastMessageSeq: 12n })
+    chat.handleServerEvent(counter)
+    chat.handleServerEvent(counter)
+    chat.onClientFocus()
+    await chat.refreshUnreadFeed()
+
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledTimes(2)
+    expect(ws.sendUpdateReadCursor).toHaveBeenLastCalledWith('dm-1', 12n)
+    expect(chat.directMessages[0].unread).toBe(1)
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 0, revision: 3n, lastReadSeq: 12n, lastRootMessageSeq: 12n, lastMessageSeq: 12n }))
+    expect(chat.directMessages[0].unread).toBe(0)
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['unchanged', 'failed'])('stops automatic recovery after an %s page and resumes for a newer root', async (outcome) => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.bootstrapped = true
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', revision: 1n, lastReadSeq: 10n, lastRootMessageSeq: 10n }))
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 10n))
+    await chat.selectChannel('dm-1')
+    if (outcome === 'failed') chatApiMocks.listConversationMessages.mockRejectedValueOnce(new Error('offline'))
+    else chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 10n))
+
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 2, revision: 2n, lastReadSeq: 10n, lastRootMessageSeq: 12n }))
+    await chat.ensureConversationHistory('dm-1')
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 2, revision: 3n, lastReadSeq: 10n, lastRootMessageSeq: 12n }))
+    chat.onClientFocus()
+    await chat.refreshUnreadFeed()
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(2)
+    expect(ws.sendUpdateReadCursor).not.toHaveBeenCalled()
+    expect(chat.directMessages[0].unread).toBe(2)
+
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 13n))
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 3, revision: 4n, lastReadSeq: 10n, lastRootMessageSeq: 13n }))
+    await vi.waitFor(() => expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 13n))
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(3)
+  })
+
+  it('resumes catch-up on focus when the older HTTP page completed while the tab was hidden', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', revision: 1n, lastReadSeq: 10n, lastRootMessageSeq: 10n }))
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 10n))
+    await chat.selectChannel('dm-1')
+    let resolveOlder!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    chatApiMocks.listConversationMessages.mockReturnValueOnce(new Promise(resolve => { resolveOlder = resolve }))
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, revision: 2n, lastReadSeq: 10n, lastRootMessageSeq: 11n }))
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 2, revision: 3n, lastReadSeq: 10n, lastRootMessageSeq: 12n }))
+    chat.setClientActive(false)
+    resolveOlder(buildRootHistoryPage('dm-1', 11n))
+    await chat.ensureConversationHistory('dm-1')
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(2)
+    expect(ws.sendUpdateReadCursor).not.toHaveBeenCalled()
+
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 12n))
+    chat.setClientActive(true)
+    chat.onClientFocus()
+    await vi.waitFor(() => expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 12n))
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', revision: 4n, lastReadSeq: 12n, lastRootMessageSeq: 12n }))
+    expect(chat.directMessages[0].unread).toBe(0)
+    expect(chat.activeChannelId).toBe('dm-1')
+  })
+
+  it('catches up after an older-history request when its counter revealed a newer root', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', revision: 1n, lastReadSeq: 10n, lastRootMessageSeq: 10n }))
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce({ ...buildRootHistoryPage('dm-1', 10n), has_more: true, next_before_channel_seq: '10' })
+    await chat.selectChannel('dm-1')
+    let resolveOlder!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    chatApiMocks.listConversationMessages
+      .mockReturnValueOnce(new Promise(resolve => { resolveOlder = resolve }))
+      .mockResolvedValueOnce(buildRootHistoryPage('dm-1', 11n))
+    const loadingOlder = chat.loadOlderConversationHistory('dm-1')
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, revision: 2n, lastReadSeq: 10n, lastRootMessageSeq: 11n }))
+    resolveOlder(buildRootHistoryPage('dm-1', 8n))
+    await loadingOlder
+    await vi.waitFor(() => expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 11n))
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(3)
+    expect(chatApiMocks.listConversationMessages.mock.calls[2]).toEqual(['dm-1', undefined])
+  })
+
+  it('handles a delayed duplicate live root after the history read failed to send', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValueOnce(false).mockReturnValue(true)
+    chat.bootstrapped = true
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 1, notificationLevel: NotificationLevel.ALL }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 12n))
+    await chat.selectChannel('dm-1')
+    chat.handleServerEvent(create(ServerEventSchema, {
+      eventSeq: 1n, eventId: 'delayed-root-from-history',
+      payload: { case: 'messageCreated', value: create(MessageEventSchema, { conversationId: 'dm-1', messageId: 'root-12', senderId: 'user-2', channelSeq: 12n }) },
+    }))
+    expect(chat.messages['dm-1']).toHaveLength(1)
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledTimes(2)
+    expect(ws.sendUpdateReadCursor).toHaveBeenLastCalledWith('dm-1', 12n)
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a failed forced read retry pending for focus instead of suppressing it as already sent', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 1, notificationLevel: NotificationLevel.ALL }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 12n))
+    await chat.selectChannel('dm-1')
+    vi.mocked(ws.sendUpdateReadCursor).mockReturnValueOnce(false)
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, revision: 2n, lastReadSeq: 11n, lastRootMessageSeq: 12n }))
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledTimes(2)
+    chat.onClientFocus()
+    chat.onClientFocus()
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledTimes(3)
+    expect(ws.sendUpdateReadCursor).toHaveBeenLastCalledWith('dm-1', 12n)
+    expect(chat.directMessages[0].unread).toBe(1)
+  })
+
+  it('does not retry the root cursor for a remaining thread mention at an already confirmed cursor', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.MENTIONS_ONLY }]
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', revision: 1n, lastReadSeq: 12n, lastRootMessageSeq: 12n }))
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 12n))
+    await chat.selectChannel('dm-1')
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, unreadMentions: 1, hasUnreadThreadReplies: true, revision: 2n, lastReadSeq: 12n, lastRootMessageSeq: 12n, lastMessageSeq: 13n }))
+    chat.onClientFocus()
+    expect(ws.sendUpdateReadCursor).not.toHaveBeenCalled()
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(1)
+    expect(chat.directMessages[0].unread).toBe(1)
+  })
+
+  it('automatically reloads when a newer root target arrives during the latest request', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 1, notificationLevel: NotificationLevel.ALL }]
+    let resolvePage!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    chatApiMocks.listConversationMessages
+      .mockReturnValueOnce(new Promise(resolve => { resolvePage = resolve }))
+      .mockResolvedValueOnce(buildRootHistoryPage('dm-1', 3n))
+    const opening = chat.selectChannel('dm-1')
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, revision: 1n, lastMessageSeq: 3n, lastRootMessageSeq: 3n }))
+    resolvePage(buildRootHistoryPage('dm-1', 2n))
+    await opening
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 2n)
+    await chat.ensureConversationHistory('dm-1')
+
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(2)
+    expect(chat.messages['dm-1'].some(message => message.channelSeq === 3n)).toBe(true)
+    expect(ws.sendUpdateReadCursor).toHaveBeenLastCalledWith('dm-1', 3n)
   })
 
   it('replaces stale unread counters and presence only after reconnect bootstrap completes', async () => {
@@ -1736,10 +2270,10 @@ describe('chatStore phase 6 flows', () => {
     expect(chat.messages['channel-1'][0].myReactions).toEqual([])
   })
 
-  it('advances read cursor when a new message arrives in the active conversation', () => {
+  it('advances read cursor when a new message arrives in the active conversation', async () => {
     const chat = useChatStore()
     const ws = useWsStore()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
     chat.setClientActive(true)
 
     chat.workspace = {
@@ -1758,6 +2292,8 @@ describe('chatStore phase 6 flows', () => {
       lastMessageSeq: 1n,
       notificationLevel: NotificationLevel.ALL,
     }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('channel-1', 1n))
+    await chat.ensureConversationHistory('channel-1')
     chat.activeChannelId = 'channel-1'
     chat.bootstrapped = true
 
@@ -1784,7 +2320,7 @@ describe('chatStore phase 6 flows', () => {
   it('resolves unknown WS sender name using email fallback from user directory', async () => {
     const chat = useChatStore()
     const ws = useWsStore()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
     chat.setClientActive(true)
     chatApiMocks.listDmCandidates.mockResolvedValue([
       {
@@ -2030,10 +2566,10 @@ describe('chatStore phase 6 flows', () => {
     expect(chat.userCallPresenceByUserId).toEqual({})
   })
 
-  it('defers active-conversation read mark when tab is hidden and leaves unread state to server counters', () => {
+  it('defers active-conversation read mark when tab is hidden and leaves unread state to server counters', async () => {
     const chat = useChatStore()
     const ws = useWsStore()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
     chat.setClientActive(false)
 
     chat.workspace = {
@@ -2052,6 +2588,8 @@ describe('chatStore phase 6 flows', () => {
       lastMessageSeq: 1n,
       notificationLevel: NotificationLevel.ALL,
     }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('channel-1', 1n))
+    await chat.ensureConversationHistory('channel-1')
     chat.activeChannelId = 'channel-1'
     chat.bootstrapped = true
 
@@ -2082,10 +2620,10 @@ describe('chatStore phase 6 flows', () => {
     expect(chat.channels[0].unread).toBe(0)
   })
 
-  it('defers active-conversation read mark when window is blurred and leaves unread state to server counters', () => {
+  it('defers active-conversation read mark when window is blurred and leaves unread state to server counters', async () => {
     const chat = useChatStore()
     const ws = useWsStore()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
     chat.setClientActive(false)
 
     chat.workspace = {
@@ -2104,6 +2642,8 @@ describe('chatStore phase 6 flows', () => {
       lastMessageSeq: 1n,
       notificationLevel: NotificationLevel.ALL,
     }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('channel-1', 1n))
+    await chat.ensureConversationHistory('channel-1')
     chat.activeChannelId = 'channel-1'
     chat.bootstrapped = true
 
@@ -2476,10 +3016,10 @@ describe('chatStore phase 6 flows', () => {
     off()
   })
 
-  it('marks visible mention notifications read without emitting incoming hooks', () => {
+  it('marks visible mention notifications read without emitting incoming hooks', async () => {
     const chat = useChatStore()
     const ws = useWsStore()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
     chat.setClientActive(true)
     chat.channels = [{
       id: 'channel-1',
@@ -2493,6 +3033,8 @@ describe('chatStore phase 6 flows', () => {
     chat.messages = {
       'channel-1': [buildMessage({ id: 'message-visible-mention-1', channelId: 'channel-1', channelSeq: 2n })],
     }
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('channel-1', 2n))
+    await chat.ensureConversationHistory('channel-1')
     chat.activeChannelId = 'channel-1'
     chat.chatViewMode = 'conversation'
     chat.bootstrapped = true
@@ -2524,16 +3066,16 @@ describe('chatStore phase 6 flows', () => {
 
     expect(onIncoming).not.toHaveBeenCalled()
     expect(chat.notifications).toEqual([])
-    expect(chat.channels[0].unread).toBe(0)
+    expect(chat.channels[0].unread).toBe(1)
     expect(ws.sendUpdateReadCursor).toHaveBeenCalledWith('channel-1', 2n)
     expect(chatApiMocks.resolveUnreadFeedNotification).toHaveBeenCalledWith('mention-visible-1')
     off()
   })
 
-  it('resolves notification_added before message_created only for the visible root target', () => {
+  it('resolves notification_added before message_created only for the visible root target', async () => {
     const chat = useChatStore()
     const ws = useWsStore()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
     chat.setClientActive(true)
     chat.channels = [{
       id: 'channel-1',
@@ -2544,6 +3086,8 @@ describe('chatStore phase 6 flows', () => {
       lastMessageSeq: 1n,
       notificationLevel: NotificationLevel.ALL,
     }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('channel-1', 1n))
+    await chat.ensureConversationHistory('channel-1')
     chat.activeChannelId = 'channel-1'
     chat.chatViewMode = 'conversation'
     chat.bootstrapped = true
@@ -2865,10 +3409,10 @@ describe('chatStore phase 6 flows', () => {
     ])
   })
 
-  it('marks active direct message as read for self-authored messages', () => {
+  it('marks active direct message as read for self-authored messages', async () => {
     const chat = useChatStore()
     const ws = useWsStore()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
     chat.setClientActive(true)
 
     chat.workspace = {
@@ -2887,6 +3431,8 @@ describe('chatStore phase 6 flows', () => {
       lastMessageSeq: 1n,
       notificationLevel: NotificationLevel.ALL,
     }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 1n))
+    await chat.ensureConversationHistory('dm-1')
     chat.activeChannelId = 'dm-1'
     chat.bootstrapped = true
 
@@ -3371,7 +3917,7 @@ describe('chatStore phase 6 flows', () => {
   it('clears unread feed entries for the whole thread when opening a thread', () => {
     const chat = useChatStore()
     const ws = useWsStore()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
     ws.sendSubscribeThread = vi.fn()
 
     chat.channels = [{
@@ -3452,7 +3998,7 @@ describe('chatStore phase 6 flows', () => {
 
     expect(chat.unreadFeedItems.map(item => item.id)).toEqual(['thread:reply-3'])
     expect(chat.unreadFeedTotalCount).toBe(1)
-    expect(chat.channels[0].unread).toBe(0)
+    expect(chat.channels[0].unread).toBe(4)
     expect(ws.sendUpdateReadCursor).toHaveBeenCalledWith('channel-1', 10n)
     expect(ws.sendSubscribeThread).toHaveBeenCalledWith('channel-1', 'root-1', 0n)
   })
@@ -3462,7 +4008,7 @@ describe('chatStore phase 6 flows', () => {
     const ws = useWsStore()
     ws.state = 'LIVE_SYNCED'
     ws.sendSubscribeThread = vi.fn()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
     chat.bootstrapped = true
     chat.setClientActive(true)
     chat.channels = [{
@@ -3524,7 +4070,7 @@ describe('chatStore phase 6 flows', () => {
       const ws = useWsStore()
       ws.state = 'LIVE_SYNCED'
       ws.sendSubscribeThread = vi.fn().mockReturnValue(true)
-      ws.sendUpdateReadCursor = vi.fn()
+      ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
       ws.sendMessage = vi.fn().mockReturnValue(true)
       chat.bootstrapped = true
       chat.setClientActive(true)
@@ -3779,7 +4325,7 @@ describe('chatStore phase 6 flows', () => {
   it('resolves every unread notification for a thread when marking one thread item read', async () => {
     const chat = useChatStore()
     const ws = useWsStore()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
 
     chat.channels = [{
       id: 'channel-1',
@@ -3903,7 +4449,7 @@ describe('chatStore phase 6 flows', () => {
     expect(chat.unreadFeedItems.map(item => item.id)).toEqual(['thread:notif-3'])
     expect(chat.unreadFeedTotalCount).toBe(1)
     expect(chat.notifications.map(notification => notification.id)).toEqual(['notif-3'])
-    expect(chat.channels[0].unread).toBe(0)
+    expect(chat.channels[0].unread).toBe(2)
     expect(ws.sendUpdateReadCursor).toHaveBeenCalledWith('channel-1', 10n)
   })
 
@@ -4786,6 +5332,59 @@ describe('chatStore phase 6 flows', () => {
     expect(chat.conversationHasMoreHistory('dm-1')).toBe(false)
   })
 
+  it('preserves a newer versioned counter through a delayed history-clear event and recovers the visible root', async () => {
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chat.bootstrapped = true
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 11n))
+    await chat.ensureConversationHistory('dm-1')
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, hasUnreadThreadReplies: true, revision: 101n, lastReadSeq: 10n, lastMessageSeq: 11n, lastRootMessageSeq: 11n }))
+    chat.activeChannelId = 'dm-1'
+    let resolveRecovery!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    chatApiMocks.listConversationMessages.mockReturnValueOnce(new Promise(resolve => { resolveRecovery = resolve }))
+
+    chat.handleServerEvent(create(ServerEventSchema, {
+      eventSeq: 100n, eventId: 'delayed-clear-100',
+      payload: { case: 'dmHistoryCleared', value: create(DmHistoryClearedEventSchema, { conversationId: 'dm-1' }) },
+    }))
+
+    expect(chat.directMessages[0].unread).toBe(1)
+    expect(chat.directMessages[0].hasUnreadThreadReplies).toBe(true)
+    expect(chat.messages['dm-1']).toEqual([])
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(2)
+    expect(ws.sendUpdateReadCursor).not.toHaveBeenCalled()
+    resolveRecovery(buildRootHistoryPage('dm-1', 11n, 'root after the earlier clear'))
+    await chat.ensureConversationHistory('dm-1')
+
+    expect(chat.messages['dm-1'][0].body).toBe('root after the earlier clear')
+    expect(chat.directMessages[0].unread).toBe(1)
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-1', 11n)
+  })
+
+  it('preserves a newer versioned counter when an earlier HTTP history-clear completes late', async () => {
+    const chat = useChatStore()
+    chat.bootstrapped = true
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'offline', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 10n))
+    await chat.ensureConversationHistory('dm-1')
+    let completeClear!: () => void
+    chatApiMocks.clearDMConversationHistory.mockReturnValueOnce(new Promise<void>(resolve => { completeClear = resolve }))
+    const clearing = chat.clearDMConversationHistory('dm-1')
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, hasUnreadThreadReplies: true, revision: 101n, lastReadSeq: 10n, lastMessageSeq: 11n, lastRootMessageSeq: 11n }))
+    completeClear()
+    await clearing
+
+    expect(chat.directMessages[0].unread).toBe(1)
+    expect(chat.directMessages[0].hasUnreadThreadReplies).toBe(true)
+    expect(chat.messages['dm-1']).toEqual([])
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 11n))
+    await chat.ensureConversationHistory('dm-1')
+    expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(2)
+    expect(chat.messages['dm-1'][0].channelSeq).toBe(11n)
+  })
+
   it('reloads secret history after invalidation and ignores earlier history and context responses', async () => {
     const chat = useChatStore()
     const ws = useWsStore()
@@ -5148,7 +5747,7 @@ describe('chatStore phase 6 flows', () => {
   it('loads conversation history when selecting a conversation with no cached messages', async () => {
     const chat = useChatStore()
     const ws = useWsStore()
-    ws.sendUpdateReadCursor = vi.fn()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
     chatApiMocks.listConversationMessages.mockResolvedValue({
       messages: [
         {
@@ -5723,6 +6322,61 @@ describe('chatStore task comment events', () => {
     off()
     chat.handleServerEvent(event(3n))
     expect(receive).toHaveBeenCalledTimes(2)
+    chat.resetRuntimeState()
+  })
+})
+
+describe('chatStore ordered document event subscriptions', () => {
+  it('delivers live and replayed events once after advancing the cursor and isolates subscribers', async () => {
+    setActivePinia(createPinia())
+    const chat = useChatStore()
+    const ws = useWsStore()
+    chat.bootstrapped = true
+    ws.state = 'LIVE_SYNCED'
+    ws.sendSyncSince = vi.fn()
+    const received = vi.fn((evt) => { expect(chat.lastAppliedEventSeq).toBe(evt.eventSeq) })
+    chat.subscribeAppliedServerEvents(() => { throw new Error('consumer failed') })
+    const off = chat.subscribeAppliedServerEvents(received)
+    const event = (seq: bigint) => create(ServerEventSchema, {
+      eventSeq: seq, eventId: `sheet-event-${seq}`, eventType: EventType.SPREADSHEET_CHANGED,
+      payload: { case: 'spreadsheetChanged', value: create(SpreadsheetChangedEventSchema, {
+        documentId: 'doc', operationId: `op-${seq}`, revision: seq, structureEpoch: 0n, kind: 'cells',
+      }) },
+    })
+    chat.handleServerEvent(event(1n))
+    chat.handleServerEvent(event(1n))
+    chat.handleSyncSinceResponse(create(SyncSinceResponseSchema, {
+      fromSeq: 1n, toSeq: 2n, syncCursor: 2n, events: [event(1n), event(2n)],
+    }))
+    await Promise.resolve()
+    await nextTick()
+    expect(received).toHaveBeenCalledTimes(2)
+    expect(chat.lastAppliedEventSeq).toBe(2n)
+    off()
+    chat.handleServerEvent(event(3n))
+    expect(received).toHaveBeenCalledTimes(2)
+    chat.resetRuntimeState()
+  })
+
+  it('refreshes subscribers after bootstrap and empty replay completion, then unsubscribes cleanly', async () => {
+    setActivePinia(createPinia())
+    const chat = useChatStore()
+    const ws = useWsStore()
+    ws.state = 'BOOTSTRAPPING'
+    const ready = vi.fn()
+    chat.subscribeRealtimeReady(() => { throw new Error('consumer failed') })
+    const off = chat.subscribeRealtimeReady(ready)
+    chat.handleBootstrapResponse(create(BootstrapResponseSchema, { snapshotSeq: 2n }))
+    expect(ready).toHaveBeenCalledTimes(1)
+    chat.handleSyncSinceResponse(create(SyncSinceResponseSchema, { fromSeq: 2n, syncCursor: 2n }))
+    await Promise.resolve()
+    await nextTick()
+    expect(ready).toHaveBeenCalledTimes(2)
+    off()
+    chat.handleSyncSinceResponse(create(SyncSinceResponseSchema, { fromSeq: 2n, syncCursor: 2n }))
+    await Promise.resolve()
+    await nextTick()
+    expect(ready).toHaveBeenCalledTimes(2)
     chat.resetRuntimeState()
   })
 })

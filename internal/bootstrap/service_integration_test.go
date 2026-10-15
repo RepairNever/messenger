@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	"msgnr/internal/auth"
 	"msgnr/internal/bootstrap"
@@ -466,6 +467,39 @@ func TestIntegration_Bootstrap_UnreadCountersExcludeSelfMessages(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resp.GetUnread(), 1)
 	assert.Equal(t, int32(1), resp.GetUnread()[0].GetUnreadMessages())
+}
+
+func TestIntegration_BootstrapUnreadRevisionMatchesLiveReadOnlyThreadCounter(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+	seedBootstrapWorkspace(t, ctx, pool)
+	reader := seedBootstrapUser(t, ctx, pool)
+	sender := seedBootstrapUser(t, ctx, pool)
+	chatSvc := chat.NewService(pool, events.NewStore(pool))
+	dm, err := chatSvc.CreateOrOpenDirectMessage(ctx, reader, sender)
+	require.NoError(t, err)
+	root, err := chatSvc.SendMessage(ctx, chat.SendMessageParams{ChannelID: dm.DM.ConversationID, SenderID: sender, ClientMsgID: uuid.NewString(), Body: "root"})
+	require.NoError(t, err)
+	_, err = chatSvc.UpdateReadCursor(ctx, chat.UpdateReadCursorParams{ChannelID: dm.DM.ConversationID, UserID: reader, LastReadSeq: root.ChannelSeq})
+	require.NoError(t, err)
+	_, err = chatSvc.SubscribeThread(ctx, chat.SubscribeThreadParams{ChannelID: dm.DM.ConversationID, RequesterID: reader, ThreadRootMessageID: root.MessageID})
+	require.NoError(t, err)
+	reply, err := chatSvc.SendMessage(ctx, chat.SendMessageParams{ChannelID: dm.DM.ConversationID, SenderID: sender, ClientMsgID: uuid.NewString(), Body: "reply", ThreadRootMessageID: root.MessageID})
+	require.NoError(t, err)
+	var liveCounter *packetspb.UnreadCounter
+	for _, delivery := range reply.DirectDeliveries {
+		if delivery.UserID == reader.String() && delivery.Event.GetReadCounterUpdated() != nil {
+			liveCounter = delivery.Event.GetReadCounterUpdated().GetCounter()
+		}
+	}
+	require.NotNil(t, liveCounter)
+	require.True(t, liveCounter.GetHasUnreadThreadReplies())
+	require.Greater(t, liveCounter.GetRevision(), int64(0))
+	bootstrapSvc := bootstrap.NewService(pool, &config.Config{BootstrapDefaultPageSize: 10, BootstrapMaxPageSize: 10, BootstrapSessionTTL: time.Minute})
+	response, err := bootstrapSvc.Bootstrap(ctx, auth.Principal{UserID: reader, SessionID: uuid.New(), Role: "member"}, &packetspb.BootstrapRequest{ClientInstanceId: "unread-revisions"})
+	require.NoError(t, err)
+	require.Len(t, response.GetUnread(), 1)
+	assert.True(t, proto.Equal(liveCounter, response.GetUnread()[0]), "bootstrap and live snapshots must agree at the same revision")
 }
 
 func TestIntegration_Bootstrap_DmTitleFallsBackToPeerEmail(t *testing.T) {

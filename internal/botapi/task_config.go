@@ -34,6 +34,7 @@ type taskConfigFieldDTO struct {
 type taskConfigDictionaryDTO struct {
 	ID             uuid.UUID `json:"id"`
 	Code           string    `json:"code"`
+	IsPublic       bool      `json:"is_public"`
 	CurrentVersion int       `json:"current_version"`
 }
 
@@ -68,7 +69,7 @@ func (h *Handler) tasksConfig(w http.ResponseWriter, r *http.Request, _ auth.Pri
 	dictionaryByID := make(map[uuid.UUID]taskConfigDictionaryDTO, len(dictionaries))
 	for _, dictionary := range dictionaries {
 		dictionaryByID[dictionary.ID] = taskConfigDictionaryDTO{
-			ID: dictionary.ID, Code: dictionary.Code, CurrentVersion: dictionary.CurrentVersion,
+			ID: dictionary.ID, Code: dictionary.Code, IsPublic: dictionary.IsPublic, CurrentVersion: dictionary.CurrentVersion,
 		}
 	}
 

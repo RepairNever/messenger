@@ -2778,6 +2778,115 @@ func TestIntegration_ListTasks_Pagination(t *testing.T) {
 	assert.Len(t, grp.Tasks, 1)
 }
 
+func TestIntegration_ListTasks_PaginationAcrossStatusesKeepsGroupPagesAndTotals(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+	svc := tasks.NewService(pool, nil)
+	actor := seedUser(t, ctx, pool)
+	tpl := seedTemplate(t, ctx, svc, "PGS", actor)
+	firstStatus := seedStatus(t, ctx, svc, actor)
+	secondStatus := seedStatus(t, ctx, svc, actor)
+	emptyStatus := seedStatus(t, ctx, svc, actor)
+	deletedEmptyStatus := seedStatus(t, ctx, svc, actor)
+
+	var firstTasks, secondTasks []uuid.UUID
+	for i := 0; i < 3; i++ {
+		first := seedTask(t, ctx, svc, tpl.ID, firstStatus.ID, actor, fmt.Sprintf("%02d first", i*2+1))
+		second := seedTask(t, ctx, svc, tpl.ID, secondStatus.ID, actor, fmt.Sprintf("%02d second", i*2+2))
+		firstTasks = append(firstTasks, first.ID)
+		secondTasks = append(secondTasks, second.ID)
+	}
+	_, err := svc.SoftDeleteStatus(ctx, secondStatus.ID)
+	require.NoError(t, err)
+	_, err = svc.SoftDeleteStatus(ctx, deletedEmptyStatus.ID)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		page          int
+		flat          []uuid.UUID
+		first, second []uuid.UUID
+	}{
+		{page: 2, flat: []uuid.UUID{firstTasks[1], secondTasks[1]}, first: []uuid.UUID{firstTasks[2]}, second: []uuid.UUID{secondTasks[2]}},
+		{page: 3, flat: []uuid.UUID{firstTasks[2], secondTasks[2]}, first: []uuid.UUID{}, second: []uuid.UUID{}},
+		{page: 4, flat: []uuid.UUID{}, first: []uuid.UUID{}, second: []uuid.UUID{}},
+		{page: int(^uint(0) >> 1), flat: []uuid.UUID{}, first: []uuid.UUID{}, second: []uuid.UUID{}},
+	} {
+		t.Run(fmt.Sprintf("page_%d", tc.page), func(t *testing.T) {
+			resp, err := svc.ListTasks(ctx, tasks.ListTasksParams{Page: tc.page, PageSize: 2, SortBy: "title"})
+			require.NoError(t, err)
+			assert.Equal(t, 6, resp.GrandTotal)
+			assert.Equal(t, tc.flat, taskIDs(resp.Tasks))
+			require.NotNil(t, resp.Tasks, "empty pages must serialize as arrays")
+			require.Len(t, resp.Groups, 3, "retain active empty statuses and deleted statuses with matching tasks")
+			first := findGroup(t, resp.Groups, firstStatus.ID)
+			second := findGroup(t, resp.Groups, secondStatus.ID)
+			assert.Equal(t, 3, first.Total)
+			assert.Equal(t, 3, second.Total)
+			assert.Equal(t, tc.first, taskIDs(first.Tasks))
+			assert.Equal(t, tc.second, taskIDs(second.Tasks))
+			assert.NotNil(t, second.Status.DeletedAt)
+			assert.Equal(t, tc.page, first.Page)
+			assert.Equal(t, 2, first.PageSize)
+			empty := findGroup(t, resp.Groups, emptyStatus.ID)
+			assert.Zero(t, empty.Total)
+			assert.Empty(t, empty.Tasks)
+			require.NotNil(t, empty.Tasks)
+		})
+	}
+}
+
+func TestIntegration_ListTasks_NumericFieldPagesAcrossStatusesWithMissingValues(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+	svc := tasks.NewService(pool, nil)
+	actor := seedUser(t, ctx, pool)
+	tpl := seedTemplate(t, ctx, svc, "PGN", actor)
+	firstStatus := seedStatus(t, ctx, svc, actor)
+	secondStatus := seedStatus(t, ctx, svc, actor)
+	field, err := svc.CreateField(ctx, tasks.CreateFieldParams{
+		TemplateID: tpl.ID, Code: "points", Name: "Points", Type: "number", SortOrder: 1,
+	})
+	require.NoError(t, err)
+	description := strings.Repeat("task body ", 1024)
+	create := func(statusID uuid.UUID, title, points string) tasks.TaskResponse {
+		var fields []tasks.FieldValueInput
+		if points != "" {
+			fields = []tasks.FieldValueInput{{FieldDefinitionID: field.ID, ValueNumber: &points}}
+		}
+		task, err := svc.CreateTask(ctx, tasks.CreateTaskParams{
+			TemplateID: tpl.ID, StatusID: statusID, ActorID: actor,
+			Title: title, Description: &description, FieldValues: fields,
+		})
+		require.NoError(t, err)
+		return task
+	}
+	low := create(firstStatus.ID, "Low", "1")
+	middle := create(secondStatus.ID, "Middle", "2")
+	high := create(firstStatus.ID, "High", "3")
+	missing := create(secondStatus.ID, "Missing", "")
+
+	for _, tc := range []struct {
+		desc  bool
+		first uuid.UUID
+	}{
+		{desc: false, first: high.ID},
+		{desc: true, first: low.ID},
+	} {
+		t.Run(fmt.Sprintf("descending_%t", tc.desc), func(t *testing.T) {
+			resp, err := svc.ListTasks(ctx, tasks.ListTasksParams{
+				Page: 2, PageSize: 1, SortBy: field.ID.String(), SortDesc: tc.desc,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, 4, resp.GrandTotal)
+			assert.Equal(t, []uuid.UUID{middle.ID}, taskIDs(resp.Tasks))
+			assert.Equal(t, []uuid.UUID{tc.first}, taskIDs(findGroup(t, resp.Groups, firstStatus.ID).Tasks))
+			assert.Equal(t, []uuid.UUID{missing.ID}, taskIDs(findGroup(t, resp.Groups, secondStatus.ID).Tasks))
+			require.Len(t, resp.Tasks, 1)
+			assert.Equal(t, middle.TaskRow, resp.Tasks[0], "page hydration must retain the complete task body")
+		})
+	}
+}
+
 func TestIntegration_ListTasks_DeletedStatusHiddenWhenNoTasks(t *testing.T) {
 	pool, _ := testdb.New(t)
 	ctx := context.Background()

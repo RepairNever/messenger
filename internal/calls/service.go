@@ -176,7 +176,7 @@ func (s *Service) CreateCall(ctx context.Context, p CreateCallParams) (CreateCal
 		return CreateCallResult{}, ErrBadRequest
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return CreateCallResult{}, fmt.Errorf("calls.CreateCall begin tx: %w", err)
 	}
@@ -269,7 +269,7 @@ func (s *Service) JoinCallToken(ctx context.Context, p JoinCallTokenParams) (Joi
 		return JoinCallTokenResult{}, ErrBadRequest
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return JoinCallTokenResult{}, fmt.Errorf("calls.JoinCallToken begin tx: %w", err)
 	}
@@ -335,7 +335,7 @@ func (s *Service) SetHandRaised(ctx context.Context, p SetHandRaisedParams) (Set
 		return SetHandRaisedResult{}, ErrBadRequest
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return SetHandRaisedResult{}, fmt.Errorf("calls.SetHandRaised begin tx: %w", err)
 	}
@@ -524,7 +524,7 @@ func (s *Service) AcceptInvite(ctx context.Context, p InviteActionParams) (Invit
 		return InviteActionResult{}, ErrBadRequest
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return InviteActionResult{}, fmt.Errorf("calls.AcceptInvite begin tx: %w", err)
 	}
@@ -834,7 +834,7 @@ func (s *Service) HandleWebhook(ctx context.Context, evt *lkwebhookEvent) (bool,
 		if err != nil {
 			return false, nil
 		}
-		tx, err := s.pool.Begin(ctx)
+		tx, err := events.BeginTx(ctx, s.pool)
 		if err != nil {
 			return false, fmt.Errorf("calls.HandleWebhook participant joined begin tx: %w", err)
 		}
@@ -868,7 +868,7 @@ func (s *Service) HandleWebhook(ctx context.Context, evt *lkwebhookEvent) (bool,
 		if err != nil {
 			return false, nil
 		}
-		tx, err := s.pool.Begin(ctx)
+		tx, err := events.BeginTx(ctx, s.pool)
 		if err != nil {
 			return false, fmt.Errorf("calls.HandleWebhook participant left begin tx: %w", err)
 		}
@@ -974,7 +974,7 @@ func (s *Service) HandleWebhook(ctx context.Context, evt *lkwebhookEvent) (bool,
 		return false, nil
 
 	case webhookEventRoomFinished:
-		tx, err := s.pool.Begin(ctx)
+		tx, err := events.BeginTx(ctx, s.pool)
 		if err != nil {
 			return false, fmt.Errorf("calls.HandleWebhook room finished begin tx: %w", err)
 		}

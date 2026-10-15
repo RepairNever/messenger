@@ -771,15 +771,15 @@ function dayDividerLabel(createdAt: string): string {
   return date.toLocaleDateString(undefined, options)
 }
 
-// Snapshot of where "new" messages begin when the conversation is opened. Derived
-// from the unread count at switch time; degrades to no divider when the boundary
-// message is outside the loaded window.
+// Snapshot the read cursor when the conversation opens. Unread counts cannot
+// locate the boundary because channel sequences also include own messages and replies.
 const firstUnreadSeq = ref<bigint | null>(null)
 
 function computeFirstUnreadSeq(conversationId: string): bigint | null {
   const conv = chatStore.channels.find(item => item.id === conversationId)
     ?? chatStore.directMessages.find(item => item.id === conversationId)
   if (!conv || conv.unread <= 0) return null
+  if (typeof conv.lastReadSeq === 'bigint') return conv.lastReadSeq + 1n
   if (typeof conv.lastMessageSeq !== 'bigint' || conv.lastMessageSeq <= 0n) return null
   const boundary = conv.lastMessageSeq - BigInt(conv.unread) + 1n
   return boundary > 0n ? boundary : 1n

@@ -4,6 +4,7 @@
       :template-filter="templateFilter"
       :total="tasksStore.taskListTotal"
       :show-created-date-filter="!isGrouped"
+      :active="active"
       @filters-change="onFiltersChange"
     >
       <template #after-controls>
@@ -172,7 +173,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, ref } from 'vue'
 import { useTasksStore } from '@/stores/tasks'
 import type { SortBy, SortOrder, TaskFilterPayload, TaskGroupedItem, TaskListParams } from '@/services/http/tasksApi'
 import TaskRow from './TaskRow.vue'
@@ -195,6 +196,31 @@ const emit = defineEmits<{ openTask: [publicId: string] }>()
 
 const tasksStore = useTasksStore()
 const baseFilters = ref<TaskFilterPayload>({})
+const active = ref(true)
+let hasActivated = false
+let filterChangeVersion = 0
+
+onActivated(() => {
+  const returning = hasActivated
+  hasActivated = true
+  active.value = true
+  if (!returning) return
+
+  const version = filterChangeVersion
+  void nextTick().then(() => {
+    // A sidebar/filter change already starts the appropriate refresh.
+    if (!active.value || filterChangeVersion !== version) return
+    if (isGrouped.value) {
+      void tasksStore.loadGroupedTaskList(undefined, tasksStore.groupedTaskPortionLimit)
+    } else {
+      void tasksStore.loadTaskList()
+    }
+  })
+})
+
+onDeactivated(() => {
+  active.value = false
+})
 
 const sortBy = ref<SortBy>('updated_at')
 const sortOrder = ref<SortOrder>('desc')
@@ -251,6 +277,8 @@ function setViewMode(mode: TaskListViewMode) {
 }
 
 function onFiltersChange(payload: TaskFilterPayload) {
+  if (!active.value) return
+  filterChangeVersion += 1
   baseFilters.value = payload
   applyParams()
 }

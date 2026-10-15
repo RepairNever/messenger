@@ -28,6 +28,7 @@ import type {
   ReadCursorAck,
   ConversationSummary,
   ReadCounterUpdatedEvent,
+  UnreadCounter,
   NotificationAddedEvent,
   NotificationLevelChangedEvent,
   CallStateChangedEvent,
@@ -113,6 +114,8 @@ export interface Channel {
   unread: number
   hasUnreadThreadReplies?: boolean
   lastMessageSeq?: bigint
+  lastReadSeq?: bigint
+  lastRootMessageSeq?: bigint
   lastActivityAt?: string
   notificationLevel: NotificationLevel
 }
@@ -128,6 +131,8 @@ export interface DirectMessage {
   unread: number
   hasUnreadThreadReplies?: boolean
   lastMessageSeq?: bigint
+  lastReadSeq?: bigint
+  lastRootMessageSeq?: bigint
   /** ISO timestamp of the latest message; drives sidebar ordering. */
   lastActivityAt?: string
   notificationLevel: NotificationLevel
@@ -364,7 +369,7 @@ interface BootstrapStage {
   activeCalls: ActiveCallSummary[]
   userCallPresence: Map<string, number>
   pendingInvites: CallInviteSummary[]
-  unread: Map<string, { unreadMessages: number; unreadMentions: number; hasUnreadThreadReplies: boolean }>
+  unread: Map<string, UnreadCounter>
   presence: Map<string, PresenceEvent>
 }
 
@@ -493,6 +498,16 @@ interface ConversationHistoryState {
   loading: boolean
   hasMore: boolean
   nextBeforeChannelSeq?: bigint
+  readableRootSeq?: bigint
+  recoveryRootSeq?: bigint
+  recoveryReadSeq?: bigint
+  readAttemptRevision?: bigint
+}
+
+interface ConversationHistoryLoadResult {
+  loaded: boolean
+  messageCount: number
+  lastReadSeq: bigint
 }
 
 function readStoredThreadSummaryBuckets(): StoredThreadSummariesByUser {
@@ -737,6 +752,11 @@ export const useChatStore = defineStore('chat', () => {
   let decryptionSessionGeneration = 0
   const secretHistoryGeneration = new Map<string, number>()
   const historyLoadTokenByConversation = new Map<string, number>()
+  const historyRequestByConversation = new Map<string, {
+    token: number
+    beforeChannelSeq?: bigint
+    promise: Promise<ConversationHistoryLoadResult>
+  }>()
   let ackTimer: ReturnType<typeof setTimeout> | null = null
   let ackScheduleGeneration = 0
   let ackRetryPending = false
@@ -756,6 +776,8 @@ export const useChatStore = defineStore('chat', () => {
   const pendingMessageCaches = new Map<string, Message[]>()
   const messageCacheInFlight = new Set<string>()
   const pendingReadByConversation = new Map<string, bigint>()
+  const sentReadByConversation = new Map<string, bigint>()
+  const unreadCounterByConversation = new Map<string, UnreadCounter>()
   let clientIsActive = true
   let clientInstanceId = getOrCreateClientInstanceId()
   let userDirectoryHydrated = false
@@ -765,6 +787,8 @@ export const useChatStore = defineStore('chat', () => {
   const incomingMessageNotificationHandlers = new Set<IncomingMessageNotificationHandler>()
   const taskStatusChangedNotificationHandlers = new Set<TaskStatusChangedNotificationHandler>()
   const taskCommentCreatedHandlers = new Set<TaskCommentCreatedHandler>()
+  const appliedServerEventHandlers = new Set<(event: ServerEvent) => void>()
+  const realtimeReadyHandlers = new Set<() => void>()
   const DEBUG_CONVERSATION_OPEN_PERF = import.meta.env.DEV
 
   function persistThreadSummaries() {
@@ -1201,10 +1225,15 @@ export const useChatStore = defineStore('chat', () => {
     if (resolution) void resolution
   }
 
-  function markVisibleConversationRead(conversationId: string, lastReadSeq = 0n, messageId?: string) {
-    if (!conversationId) return
+  function markVisibleConversationRead(
+    conversationId: string,
+    lastReadSeq = 0n,
+    messageId?: string,
+    options: { retryUnconfirmed?: boolean; successfulHistoryLoad?: boolean } = {},
+  ) {
+    if (!conversationId || (!options.successfulHistoryLoad && !canReadLoadedConversation(conversationId))) return
     if (lastReadSeq > 0n) {
-      requestReadMark(conversationId, lastReadSeq)
+      requestReadMark(conversationId, lastReadSeq, options.retryUnconfirmed)
     }
     resolveVisibleRootNotifications(conversationId, messageId)
   }
@@ -1287,16 +1316,17 @@ export const useChatStore = defineStore('chat', () => {
   function scrubVisibleUnreadTargets() {
     if (!isClientTabActive()) return
     if (isVisibleRootConversation(activeChannelId.value)) {
-      const lastReadSeq = channels.value.find(item => item.id === activeChannelId.value)?.lastMessageSeq
-        ?? directMessages.value.find(item => item.id === activeChannelId.value)?.lastMessageSeq
-        ?? 0n
-      markVisibleConversationRead(activeChannelId.value, lastReadSeq)
+      const history = conversationHistoryState.get(activeChannelId.value)
+      if (history?.initialized && !history.loading) {
+        markVisibleConversationRead(activeChannelId.value, history.readableRootSeq ?? 0n)
+      }
     }
     scrubActiveThreadUnreadFeed()
   }
 
-  function selectChannel(id: string) {
+  async function selectChannel(id: string) {
     const selectStartedAt = performance.now()
+    const previouslySentReadSeq = sentReadByConversation.get(id) ?? 0n
     logConversationPerf('select', {
       conversationId: id,
       cachedMessages: messages.value[id]?.length ?? 0,
@@ -1308,20 +1338,13 @@ export const useChatStore = defineStore('chat', () => {
     requestConversationComposerFocus()
     saveActiveConversationSelection(id)
     // The pinned ThreadWorkspace owns thread visibility independently of the main chat.
-    const historyPromise = ensureConversationHistory(id, selectStartedAt)
-    const ch = channels.value.find(c => c.id === id)
-    let visibleLastReadSeq = 0n
-    if (ch) {
-      visibleLastReadSeq = typeof ch.lastMessageSeq === 'bigint' ? ch.lastMessageSeq : 0n
+    const result = await ensureConversationHistoryResult(id, selectStartedAt, currentUnread(id) > 0)
+    if (result.loaded && isVisibleRootConversation(id)) {
+      markVisibleConversationRead(id, result.lastReadSeq, undefined, {
+        retryUnconfirmed: currentUnread(id) > 0 && result.lastReadSeq <= previouslySentReadSeq,
+        successfulHistoryLoad: true,
+      })
     }
-    const dm = directMessages.value.find(d => d.id === id)
-    if (dm) {
-      visibleLastReadSeq = typeof dm.lastMessageSeq === 'bigint' ? dm.lastMessageSeq : 0n
-    }
-    if (isVisibleRootConversation(id)) {
-      markVisibleConversationRead(id, visibleLastReadSeq)
-    }
-    return historyPromise
   }
 
   function registerUserName(userId: string, displayName: string) {
@@ -1688,10 +1711,15 @@ export const useChatStore = defineStore('chat', () => {
 
     conversationHistoryState.clear()
     historyLoadTokenByConversation.clear()
+    historyRequestByConversation.clear()
     pendingReadByConversation.clear()
+    sentReadByConversation.clear()
+    unreadCounterByConversation.clear()
     incomingMessageNotificationHandlers.clear()
     taskStatusChangedNotificationHandlers.clear()
     taskCommentCreatedHandlers.clear()
+    appliedServerEventHandlers.clear()
+    realtimeReadyHandlers.clear()
 
     bootstrapStage = null
     bootstrapPresenceOverlay = new Map()
@@ -2235,11 +2263,7 @@ export const useChatStore = defineStore('chat', () => {
       bootstrapStage.conversations.push(conversation)
     }
     for (const counter of resp.unread) {
-      bootstrapStage.unread.set(counter.conversationId, {
-        unreadMessages: counter.unreadMessages,
-        unreadMentions: counter.unreadMentions,
-        hasUnreadThreadReplies: counter.hasUnreadThreadReplies,
-      })
+      bootstrapStage.unread.set(counter.conversationId, counter)
     }
     for (const item of resp.presence) {
       bootstrapStage.presence.set(item.userId, item)
@@ -2272,6 +2296,7 @@ export const useChatStore = defineStore('chat', () => {
     flushOfflineQueueAfterRealtimeSync()
     drainBufferedEvents()
     recoverActiveThreadAfterRealtimeSync()
+    emitRealtimeReady()
   }
 
   /** Max conversations whose messages are pre-loaded from cache on startup. */
@@ -2439,7 +2464,8 @@ export const useChatStore = defineStore('chat', () => {
     clearAllSendTimeouts()
     clearAllThreadReplayResponseWatchdogs()
 
-    const unreadByConversation = stage.unread
+    for (const counter of stage.unread.values()) acceptUnreadCounter(counter)
+    const unreadByConversation = unreadCounterByConversation
     const nextChannels: Channel[] = []
     const nextDms: DirectMessage[] = []
 
@@ -2458,6 +2484,10 @@ export const useChatStore = defineStore('chat', () => {
     for (const summary of stage.conversations) {
       const unread = unreadByConversation.get(summary.conversationId)?.unreadMessages ?? 0
       const hasUnreadThreadReplies = unreadByConversation.get(summary.conversationId)?.hasUnreadThreadReplies ?? false
+      const counter = unreadByConversation.get(summary.conversationId)
+      const lastMessageSeq = (counter?.lastMessageSeq ?? 0n) > summary.lastMessageSeq
+        ? counter!.lastMessageSeq
+        : summary.lastMessageSeq
       if (summary.conversationType === ConversationType.DM) {
         const dmUserId = summary.topic || summary.conversationId
         registerUserName(dmUserId, summary.title)
@@ -2471,7 +2501,9 @@ export const useChatStore = defineStore('chat', () => {
           encryptionMode: encryptionModeFromSummary(summary),
           unread,
           hasUnreadThreadReplies,
-          lastMessageSeq: summary.lastMessageSeq,
+          lastMessageSeq,
+          lastReadSeq: counter?.lastReadSeq,
+          lastRootMessageSeq: counter?.lastRootMessageSeq,
           // Empty DMs have a channel creation timestamp, but no message activity.
           lastActivityAt: summary.lastMessageSeq > 0n ? timestampToIso(summary.lastActivityAt) : undefined,
           notificationLevel: summary.notificationLevel,
@@ -2484,7 +2516,9 @@ export const useChatStore = defineStore('chat', () => {
           visibility: summary.conversationType === ConversationType.CHANNEL_PRIVATE ? 'private' : 'public',
           unread,
           hasUnreadThreadReplies,
-          lastMessageSeq: summary.lastMessageSeq,
+          lastMessageSeq,
+          lastReadSeq: counter?.lastReadSeq,
+          lastRootMessageSeq: counter?.lastRootMessageSeq,
           lastActivityAt: summary.lastActivityAt
             ? new Date(Number(summary.lastActivityAt.seconds) * 1000).toISOString()
             : undefined,
@@ -2562,6 +2596,8 @@ export const useChatStore = defineStore('chat', () => {
     conversationHistoryState.clear()
     conversationInitialLoadingById.value = {}
     historyLoadTokenByConversation.clear()
+    historyRequestByConversation.clear()
+    sentReadByConversation.clear()
     threadMessages.value = {}
     for (const [threadRootMessageId, pending] of Object.entries(pendingThreadMessages)) {
       threadMessages.value[threadRootMessageId] = pending
@@ -2607,9 +2643,64 @@ export const useChatStore = defineStore('chat', () => {
     void refreshUnreadFeed()
   }
 
-  async function ensureConversationHistory(conversationId: string, selectStartedAt?: number) {
-    if (!conversationId) return
+  function canReadLoadedConversation(conversationId: string): boolean {
+    const history = conversationHistoryState.get(conversationId)
+    return history?.initialized === true && !history.loading
+  }
+
+  function reconcileVisibleConversationUnread(conversationId: string) {
+    if (!isVisibleRootConversation(conversationId)) return
+    const history = conversationHistoryState.get(conversationId)
+    const counter = unreadCounterByConversation.get(conversationId)
+    if (!history || history.loading || !counter || counter.unreadMessages <= 0) return
+    const readableSeq = history.readableRootSeq ?? 0n
+    const targetSeq = counter.lastRootMessageSeq
+    if (targetSeq > readableSeq) {
+      history.initialized = false
+      if (!directMessages.value.some(dm => dm.id === conversationId)) return
+      // Catch up after a counter overtakes the current HTTP snapshot. Retry
+      // the same target only if a page advanced our confirmed read frontier;
+      // errors and unchanged pages must not create an HTTP/read feedback loop.
+      if (history.recoveryRootSeq === targetSeq && readableSeq <= (history.recoveryReadSeq ?? 0n)) return
+      history.recoveryRootSeq = targetSeq
+      history.recoveryReadSeq = readableSeq
+      void ensureConversationHistory(conversationId)
+      return
+    }
+    if (history.initialized && readableSeq > counter.lastReadSeq) {
+      const retryUnconfirmed = counter.revision > 0n && counter.revision > (history.readAttemptRevision ?? 0n)
+      markVisibleConversationRead(conversationId, readableSeq, undefined, { retryUnconfirmed })
+    }
+  }
+
+  async function ensureConversationHistory(conversationId: string): Promise<void> {
+    await ensureConversationHistoryResult(conversationId)
+  }
+
+  async function ensureConversationHistoryResult(
+    conversationId: string,
+    selectStartedAt?: number,
+    refreshLatest = false,
+  ): Promise<ConversationHistoryLoadResult> {
+    const unloaded: ConversationHistoryLoadResult = { loaded: false, messageCount: 0, lastReadSeq: 0n }
+    if (!conversationId) return unloaded
+    const pending = historyRequestByConversation.get(conversationId)
+    if (pending && pending.token === historyLoadTokenByConversation.get(conversationId)) {
+      if (typeof pending.beforeChannelSeq !== 'bigint') return pending.promise
+      if (refreshLatest) {
+        const generation = messageStateGeneration
+        await pending.promise
+        if (generation !== messageStateGeneration) return unloaded
+      }
+    }
     const state = getOrCreateHistoryState(conversationId)
+    // A positive unread count can outlive a lost message event. Explicit opens
+    // fetch the latest page even when an older page was already initialized.
+    if (refreshLatest) {
+      state.initialized = false
+      state.recoveryRootSeq = undefined
+      state.recoveryReadSeq = undefined
+    }
     if (state.initialized) {
       if (conversationInitialLoadingById.value[conversationId]) {
         conversationInitialLoadingById.value = {
@@ -2625,10 +2716,10 @@ export const useChatStore = defineStore('chat', () => {
           ? Math.round((performance.now() - selectStartedAt) * 100) / 100
           : undefined,
       })
-      return
+      return { loaded: true, messageCount: cached.length, lastReadSeq: state.readableRootSeq ?? 0n }
     }
 
-    await loadConversationHistoryPage(conversationId, undefined, selectStartedAt)
+    return loadConversationHistoryPage(conversationId, undefined, selectStartedAt)
   }
 
   async function reloadActiveEncryptedDMHistory(): Promise<void> {
@@ -2656,16 +2747,17 @@ export const useChatStore = defineStore('chat', () => {
     if (!state.initialized || !state.hasMore || state.loading || typeof state.nextBeforeChannelSeq !== 'bigint') {
       return 0
     }
-    return loadConversationHistoryPage(conversationId, state.nextBeforeChannelSeq)
+    return (await loadConversationHistoryPage(conversationId, state.nextBeforeChannelSeq)).messageCount
   }
 
-  async function loadConversationHistoryPage(
+  function loadConversationHistoryPage(
     conversationId: string,
     beforeChannelSeq?: bigint,
     selectStartedAt?: number,
-  ): Promise<number> {
+  ): Promise<ConversationHistoryLoadResult> {
     const state = getOrCreateHistoryState(conversationId)
-    if (state.loading) return 0
+    const pending = historyRequestByConversation.get(conversationId)
+    if (pending && pending.token === historyLoadTokenByConversation.get(conversationId)) return pending.promise
 
     const token = ++historyLoadToken
     historyLoadTokenByConversation.set(conversationId, token)
@@ -2684,67 +2776,93 @@ export const useChatStore = defineStore('chat', () => {
       token,
       beforeChannelSeq: typeof beforeChannelSeq === 'bigint' ? beforeChannelSeq.toString() : undefined,
     })
-    try {
-      const e2eeDeviceId = encryptedDMHistoryDeviceId(conversationId)
-      const page = e2eeDeviceId
-        ? await listConversationMessages(conversationId, beforeChannelSeq, e2eeDeviceId)
-        : await listConversationMessages(conversationId, beforeChannelSeq)
-      const requestMs = Math.round((performance.now() - requestStartedAt) * 100) / 100
-      logConversationPerf('history:request:done', {
-        conversationId,
-        token,
-        requestMs,
-        count: page.messages.length,
-        hasMore: page.has_more,
-      })
-      if (token !== historyLoadTokenByConversation.get(conversationId)) {
-        logConversationPerf('history:request:stale', {
+    const promise = (async (): Promise<ConversationHistoryLoadResult> => {
+      try {
+        const e2eeDeviceId = encryptedDMHistoryDeviceId(conversationId)
+        const page = e2eeDeviceId
+          ? await listConversationMessages(conversationId, beforeChannelSeq, e2eeDeviceId)
+          : await listConversationMessages(conversationId, beforeChannelSeq)
+        const requestMs = Math.round((performance.now() - requestStartedAt) * 100) / 100
+        logConversationPerf('history:request:done', {
           conversationId,
           token,
-          currentToken: historyLoadTokenByConversation.get(conversationId) ?? 0,
+          requestMs,
+          count: page.messages.length,
+          hasMore: page.has_more,
         })
-        return 0
-      }
-      const applyStartedAt = performance.now()
-      applyConversationHistory(conversationId, page.messages)
-      state.initialized = true
-      state.hasMore = page.has_more
-      if (page.next_before_channel_seq) {
-        state.nextBeforeChannelSeq = BigInt(page.next_before_channel_seq)
-      } else if (page.messages.length > 0) {
-        state.nextBeforeChannelSeq = BigInt(page.messages[0].channel_seq)
-      } else {
-        state.nextBeforeChannelSeq = undefined
-      }
-      const applyMs = Math.round((performance.now() - applyStartedAt) * 100) / 100
-      logConversationPerf('history:apply:done', {
-        conversationId,
-        token,
-        applyMs,
-        totalSinceSelectMs: typeof selectStartedAt === 'number'
-          ? Math.round((performance.now() - selectStartedAt) * 100) / 100
-          : undefined,
-      })
-      return page.messages.length
-    } catch {
-      // Keep the shell usable; history reload can fail independently from WS state.
-      logConversationPerf('history:request:error', {
-        conversationId,
-        token,
-      })
-      return 0
-    } finally {
-      const isCurrentRequest = token === historyLoadTokenByConversation.get(conversationId)
-      if (isCurrentRequest) {
-        state.loading = false
-      }
-      if (isInitialLoad && isCurrentRequest) {
-        conversationInitialLoadingById.value = {
-          ...conversationInitialLoadingById.value,
-          [conversationId]: false,
+        if (token !== historyLoadTokenByConversation.get(conversationId)) {
+          logConversationPerf('history:request:stale', {
+            conversationId,
+            token,
+            currentToken: historyLoadTokenByConversation.get(conversationId) ?? 0,
+          })
+          return { loaded: false, messageCount: 0, lastReadSeq: 0n }
+        }
+        const applyStartedAt = performance.now()
+        applyConversationHistory(conversationId, page.messages)
+        const pageReadSeq = page.messages.reduce((highest, message) => (
+          !message.thread_root_message_id && BigInt(message.channel_seq) > highest
+            ? BigInt(message.channel_seq)
+            : highest
+        ), 0n)
+        // Only this authoritative page proves that earlier roots are loaded.
+        // Concurrent live roots must not hide a still-missing earlier root.
+        const lastReadSeq = pageReadSeq
+        if (typeof beforeChannelSeq !== 'bigint') state.readableRootSeq = lastReadSeq
+        const knownRootSeq = unreadCounterByConversation.get(conversationId)?.lastRootMessageSeq ?? 0n
+        state.initialized = (state.readableRootSeq ?? 0n) >= knownRootSeq
+        state.hasMore = page.has_more
+        if (page.next_before_channel_seq) {
+          state.nextBeforeChannelSeq = BigInt(page.next_before_channel_seq)
+        } else if (page.messages.length > 0) {
+          state.nextBeforeChannelSeq = BigInt(page.messages[0].channel_seq)
+        } else {
+          state.nextBeforeChannelSeq = undefined
+        }
+        const applyMs = Math.round((performance.now() - applyStartedAt) * 100) / 100
+        logConversationPerf('history:apply:done', {
+          conversationId,
+          token,
+          applyMs,
+          totalSinceSelectMs: typeof selectStartedAt === 'number'
+            ? Math.round((performance.now() - selectStartedAt) * 100) / 100
+            : undefined,
+        })
+        return { loaded: true, messageCount: page.messages.length, lastReadSeq }
+      } catch {
+        // Keep the shell usable; history reload can fail independently from WS state.
+        logConversationPerf('history:request:error', {
+          conversationId,
+          token,
+        })
+        return { loaded: false, messageCount: 0, lastReadSeq: 0n }
+      } finally {
+        const isCurrentRequest = token === historyLoadTokenByConversation.get(conversationId)
+        if (isCurrentRequest) {
+          state.loading = false
+        }
+        if (isInitialLoad && isCurrentRequest) {
+          conversationInitialLoadingById.value = {
+            ...conversationInitialLoadingById.value,
+            [conversationId]: false,
+          }
         }
       }
-    }
+    })().finally(() => {
+      if (historyRequestByConversation.get(conversationId)?.token === token) {
+        historyRequestByConversation.delete(conversationId)
+      }
+    })
+    historyRequestByConversation.set(conversationId, { token, beforeChannelSeq, promise })
+    void promise.then(result => {
+      if (result.loaded && token === historyLoadTokenByConversation.get(conversationId) && isVisibleRootConversation(conversationId)) {
+        if (typeof beforeChannelSeq !== 'bigint') {
+          markVisibleConversationRead(conversationId, result.lastReadSeq, undefined, { successfulHistoryLoad: true })
+        }
+        reconcileVisibleConversationUnread(conversationId)
+      }
+    })
+    return promise
   }
 
   async function loadMessageContext(
@@ -2961,6 +3079,7 @@ export const useChatStore = defineStore('chat', () => {
       drainBufferedEvents()
       recoverActiveThreadAfterRealtimeSync()
       _reloadActiveChannelHistory()
+      emitRealtimeReady()
       return
     }
 
@@ -2986,6 +3105,7 @@ export const useChatStore = defineStore('chat', () => {
     drainBufferedEvents()
     recoverActiveThreadAfterRealtimeSync()
     _reloadActiveChannelHistory()
+    emitRealtimeReady()
   }
 
   /**
@@ -3019,11 +3139,9 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function handleReadCursorAck(ack: ReadCursorAck) {
-    const targetChannel = channels.value.find(channel => channel.id === ack.conversationId)
-    if (targetChannel) targetChannel.unread = 0
-    const targetDm = directMessages.value.find(dm => dm.id === ack.conversationId)
-    if (targetDm) targetDm.unread = 0
+  function handleReadCursorAck(_ack: ReadCursorAck) {
+    // A cursor acknowledgement can be partial. Only an unread counter snapshot
+    // can tell us whether newer unread messages still remain.
     scheduleUnreadFeedRefresh()
   }
 
@@ -3286,7 +3404,28 @@ export const useChatStore = defineStore('chat', () => {
     advanceSyncCursor(evt.eventSeq)
     pendingAckEventCount += 1
     scheduleAckFlush()
+    for (const handler of appliedServerEventHandlers) {
+      try { handler(evt) } catch { /* A consumer cannot interrupt ordered replay. */ }
+    }
     return true
+  }
+
+  /** Ordered, duplicate-filtered events from both live delivery and SyncSince. */
+  function subscribeAppliedServerEvents(handler: (event: ServerEvent) => void): () => void {
+    appliedServerEventHandlers.add(handler)
+    return () => { appliedServerEventHandlers.delete(handler) }
+  }
+
+  /** Documents are outside bootstrap; their active editor refreshes at this boundary. */
+  function subscribeRealtimeReady(handler: () => void): () => void {
+    realtimeReadyHandlers.add(handler)
+    return () => { realtimeReadyHandlers.delete(handler) }
+  }
+
+  function emitRealtimeReady() {
+    for (const handler of realtimeReadyHandlers) {
+      try { handler() } catch { /* Isolate independent active views. */ }
+    }
   }
 
   function advanceSyncCursor(nextSeq: bigint) {
@@ -3504,8 +3643,9 @@ export const useChatStore = defineStore('chat', () => {
 
   function applyConversationSummary(summary?: ConversationSummary) {
     if (!summary) return
-    const unread = currentUnread(summary.conversationId)
-    const hasUnreadThreadReplies = currentHasUnreadThreadReplies(summary.conversationId)
+    const counter = unreadCounterByConversation.get(summary.conversationId)
+    const unread = counter?.unreadMessages ?? currentUnread(summary.conversationId)
+    const hasUnreadThreadReplies = counter?.hasUnreadThreadReplies ?? currentHasUnreadThreadReplies(summary.conversationId)
     // ConversationUpserted events from direct delivery may not carry notification_level.
     // Preserve the current level if the summary doesn't provide one (defaults to ALL=0).
     const currentLevel = currentNotificationLevel(summary.conversationId)
@@ -3523,6 +3663,8 @@ export const useChatStore = defineStore('chat', () => {
         unread,
         hasUnreadThreadReplies,
         lastMessageSeq: summary.lastMessageSeq,
+        lastReadSeq: counter?.lastReadSeq,
+        lastRootMessageSeq: counter?.lastRootMessageSeq,
         lastActivityAt: summary.lastMessageSeq > 0n ? timestampToIso(summary.lastActivityAt) : undefined,
         notificationLevel,
       }
@@ -3538,6 +3680,8 @@ export const useChatStore = defineStore('chat', () => {
       unread,
       hasUnreadThreadReplies,
       lastMessageSeq: summary.lastMessageSeq,
+      lastReadSeq: counter?.lastReadSeq,
+      lastRootMessageSeq: counter?.lastRootMessageSeq,
       lastActivityAt: summary.lastActivityAt
         ? new Date(Number(summary.lastActivityAt.seconds) * 1000).toISOString()
         : undefined,
@@ -3546,19 +3690,45 @@ export const useChatStore = defineStore('chat', () => {
     upsertChannel(next)
   }
 
+  function acceptUnreadCounter(counter: UnreadCounter): boolean {
+    const current = unreadCounterByConversation.get(counter.conversationId)
+    if (current) {
+      if (current.revision > 0n) {
+        if (counter.revision <= current.revision) return false
+      } else if (counter.revision === 0n && counter.lastReadSeq < current.lastReadSeq) {
+        return false
+      }
+    }
+    unreadCounterByConversation.set(counter.conversationId, counter)
+    return true
+  }
+
   function applyReadCounterUpdate(evt: ReadCounterUpdatedEvent) {
     const counter = evt.counter
-    if (!counter) return
+    if (!counter || !acceptUnreadCounter(counter)) return
     const targetChannel = channels.value.find(channel => channel.id === counter.conversationId)
     if (targetChannel) {
       targetChannel.unread = counter.unreadMessages
       targetChannel.hasUnreadThreadReplies = counter.hasUnreadThreadReplies
+      targetChannel.lastReadSeq = counter.lastReadSeq
+      targetChannel.lastRootMessageSeq = counter.lastRootMessageSeq
     }
     const targetDm = directMessages.value.find(dm => dm.id === counter.conversationId)
     if (targetDm) {
       targetDm.unread = counter.unreadMessages
       targetDm.hasUnreadThreadReplies = counter.hasUnreadThreadReplies
+      targetDm.lastReadSeq = counter.lastReadSeq
+      targetDm.lastRootMessageSeq = counter.lastRootMessageSeq
     }
+    bumpConversationActivity(counter.conversationId, undefined, counter.lastMessageSeq)
+    const history = conversationHistoryState.get(counter.conversationId)
+    if (counter.unreadMessages > 0 && history?.initialized && counter.lastRootMessageSeq > (history.readableRootSeq ?? 0n)) {
+      // A counter can reveal a missing root even when its event was lost.
+      history.initialized = false
+    }
+    // Each accepted revision is new evidence that an earlier read may not
+    // have succeeded. Retry only a proven loaded frontier beyond its cursor.
+    reconcileVisibleConversationUnread(counter.conversationId)
     if (counter.hasUnreadThreadReplies && activeThreadConversationId.value === counter.conversationId && activeThreadRootId.value) {
       maybeRecoverActiveThread(activeThreadRootId.value, counter.conversationId)
     }
@@ -3824,8 +3994,11 @@ export const useChatStore = defineStore('chat', () => {
     directMessages.value = directMessages.value.filter(dm => dm.id !== conversationId)
     cancelScheduledMessageCache(conversationId)
     pendingReadByConversation.delete(conversationId)
+    sentReadByConversation.delete(conversationId)
+    unreadCounterByConversation.delete(conversationId)
     conversationHistoryState.delete(conversationId)
     historyLoadTokenByConversation.delete(conversationId)
+    historyRequestByConversation.delete(conversationId)
     const nextInitialLoading = { ...conversationInitialLoadingById.value }
     delete nextInitialLoading[conversationId]
     conversationInitialLoadingById.value = nextInitialLoading
@@ -3846,7 +4019,7 @@ export const useChatStore = defineStore('chat', () => {
     scheduleUnreadFeedRefresh()
   }
 
-  function clearDMConversationHistoryLocal(conversationId: string) {
+  function clearDMConversationHistoryLocal(conversationId: string, recoverVisible = true) {
     if (!conversationId) return
     messageStateGeneration += 1
 
@@ -3866,10 +4039,14 @@ export const useChatStore = defineStore('chat', () => {
     messages.value[conversationId] = []
     pendingReadByConversation.delete(conversationId)
     historyLoadTokenByConversation.set(conversationId, ++historyLoadToken)
+    sentReadByConversation.delete(conversationId)
+    const counter = unreadCounterByConversation.get(conversationId)
+    const retainedCounter = counter && counter.revision > 0n ? counter : undefined
+    const needsLatestHistory = (retainedCounter?.lastRootMessageSeq ?? 0n) > 0n
     conversationHistoryState.set(conversationId, {
-      initialized: true,
+      initialized: !needsLatestHistory,
       loading: false,
-      hasMore: false,
+      hasMore: needsLatestHistory,
     })
     if (conversationInitialLoadingById.value[conversationId]) {
       conversationInitialLoadingById.value = {
@@ -3880,8 +4057,8 @@ export const useChatStore = defineStore('chat', () => {
 
     const dm = directMessages.value.find(item => item.id === conversationId)
     if (dm) {
-      dm.unread = 0
-      dm.hasUnreadThreadReplies = false
+      dm.unread = retainedCounter?.unreadMessages ?? 0
+      dm.hasUnreadThreadReplies = retainedCounter?.hasUnreadThreadReplies ?? false
     }
 
     if (activeThreadConversationId.value === conversationId) {
@@ -3897,6 +4074,9 @@ export const useChatStore = defineStore('chat', () => {
 
     void clearCachedMessages(conversationId)
     scheduleUnreadFeedRefresh()
+    if (recoverVisible && needsLatestHistory && isVisibleRootConversation(conversationId)) {
+      void ensureConversationHistory(conversationId)
+    }
   }
 
   function invalidateSecretHistory(conversationId: string, reload = true) {
@@ -3905,7 +4085,7 @@ export const useChatStore = defineStore('chat', () => {
     const dm = directMessages.value.find(item => item.id === conversationId)
     const unread = dm?.unread ?? 0
     const hasUnreadThreadReplies = dm?.hasUnreadThreadReplies ?? false
-    clearDMConversationHistoryLocal(conversationId)
+    clearDMConversationHistoryLocal(conversationId, false)
     // Deletion of one message is not a read action. Server counters arrive
     // independently and must not be overwritten by local cache invalidation.
     if (dm) {
@@ -3942,6 +4122,17 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function upsertDirectMessage(dm: DirectMessage) {
+    const counter = unreadCounterByConversation.get(dm.id)
+    if (counter) {
+      dm = {
+        ...dm,
+        unread: counter.unreadMessages,
+        hasUnreadThreadReplies: counter.hasUnreadThreadReplies,
+        lastReadSeq: counter.lastReadSeq,
+        lastRootMessageSeq: counter.lastRootMessageSeq,
+        lastMessageSeq: (counter.lastMessageSeq ?? 0n) > (dm.lastMessageSeq ?? 0n) ? counter.lastMessageSeq : dm.lastMessageSeq,
+      }
+    }
     registerUserIdentity(dm.userId, dm.displayName, undefined, dm.avatarUrl ?? '', dm.customStatus ?? null)
     const idx = directMessages.value.findIndex(existing => existing.id === dm.id)
     if (idx === -1) {
@@ -3989,14 +4180,7 @@ export const useChatStore = defineStore('chat', () => {
   function openDirectMessage(dm: DirectMessage) {
     upsertDirectMessage(dm)
     if (!messages.value[dm.id]) messages.value[dm.id] = []
-    activeChannelId.value = dm.id
-    showConversationView()
-    clearFocusedMessages()
-    requestConversationComposerFocus()
-    saveActiveConversationSelection(dm.id)
-    const target = directMessages.value.find(item => item.id === dm.id)
-    if (target) target.unread = 0
-    void ensureConversationHistory(dm.id)
+    void selectChannel(dm.id)
   }
 
   function currentUnread(conversationId: string): number {
@@ -4094,19 +4278,25 @@ export const useChatStore = defineStore('chat', () => {
 
     if (!messages.value[channelId]) messages.value[channelId] = []
     const alreadyPresent = messages.value[channelId].some(m => m.id === evt.messageId)
-    if (alreadyPresent) return
-
-    messages.value[channelId].push(msg)
-    decryptAndApplyMessage(
-      msg,
-      evt.encryptedDmPayload?.recipients,
-      () => messages.value[channelId]?.find(item => item.id === msg.id),
-    )
-    scheduleMessageCache(channelId, messages.value[channelId])
-    if (isVisibleMessageTarget(channelId)) {
-      markVisibleConversationRead(channelId, evt.channelSeq, evt.messageId)
+    if (!alreadyPresent) {
+      messages.value[channelId].push(msg)
+      decryptAndApplyMessage(
+        msg,
+        evt.encryptedDmPayload?.recipients,
+        () => messages.value[channelId]?.find(item => item.id === msg.id),
+      )
+      scheduleMessageCache(channelId, messages.value[channelId])
+    }
+    const history = conversationHistoryState.get(channelId)
+    if (history?.initialized && !history.loading) {
+      if (evt.channelSeq > (history.readableRootSeq ?? 0n)) history.readableRootSeq = evt.channelSeq
+    }
+    if (isVisibleMessageTarget(channelId) && canReadLoadedConversation(channelId)) {
+      const readableSeq = history?.readableRootSeq ?? 0n
+      if (readableSeq >= evt.channelSeq) markVisibleConversationRead(channelId, readableSeq, evt.messageId)
       return
     }
+    reconcileVisibleConversationUnread(channelId)
     if (channelId === activeChannelId.value && !isClientTabActive()) {
       queuePendingReadMark(channelId, evt.channelSeq)
     }
@@ -4128,22 +4318,26 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function clearUnreadForConversation(conversationId: string) {
-    const channel = channels.value.find(item => item.id === conversationId)
-    if (channel) channel.unread = 0
-    const dm = directMessages.value.find(item => item.id === conversationId)
-    if (dm) dm.unread = 0
-  }
-
-  function sendReadMark(conversationId: string, lastReadSeq: bigint) {
-    useWsStore().sendUpdateReadCursor(conversationId, lastReadSeq)
-    clearUnreadForConversation(conversationId)
+  function sendReadMark(conversationId: string, lastReadSeq: bigint, retryUnconfirmed = false) {
+    const confirmedSeq = unreadCounterByConversation.get(conversationId)?.lastReadSeq ?? 0n
+    if (lastReadSeq <= confirmedSeq || (!retryUnconfirmed && lastReadSeq <= (sentReadByConversation.get(conversationId) ?? 0n))) {
+      pendingReadByConversation.delete(conversationId)
+      return
+    }
+    const history = conversationHistoryState.get(conversationId)
+    if (history) history.readAttemptRevision = unreadCounterByConversation.get(conversationId)?.revision ?? 0n
+    if (!useWsStore().sendUpdateReadCursor(conversationId, lastReadSeq)) {
+      if (retryUnconfirmed) sentReadByConversation.delete(conversationId)
+      queuePendingReadMark(conversationId, lastReadSeq)
+      return
+    }
+    sentReadByConversation.set(conversationId, lastReadSeq)
     pendingReadByConversation.delete(conversationId)
   }
 
-  function requestReadMark(conversationId: string, lastReadSeq: bigint) {
+  function requestReadMark(conversationId: string, lastReadSeq: bigint, retryUnconfirmed = false) {
     if (isClientTabActive()) {
-      sendReadMark(conversationId, lastReadSeq)
+      sendReadMark(conversationId, lastReadSeq, retryUnconfirmed)
       return
     }
     queuePendingReadMark(conversationId, lastReadSeq)
@@ -4171,20 +4365,11 @@ export const useChatStore = defineStore('chat', () => {
     if (!conversationId) return
 
     const pendingSeq = pendingReadByConversation.get(conversationId)
-    if (typeof pendingSeq === 'bigint' && pendingSeq > 0n) {
-      sendReadMark(conversationId, pendingSeq)
-      return
+    if (typeof pendingSeq === 'bigint' && pendingSeq > 0n && canReadLoadedConversation(conversationId)) {
+      const loadedSeq = conversationHistoryState.get(conversationId)?.readableRootSeq ?? 0n
+      if (loadedSeq > 0n) sendReadMark(conversationId, pendingSeq < loadedSeq ? pendingSeq : loadedSeq)
     }
-
-    const channel = channels.value.find(item => item.id === conversationId)
-    if (channel && channel.unread > 0 && typeof channel.lastMessageSeq === 'bigint' && channel.lastMessageSeq > 0n) {
-      sendReadMark(conversationId, channel.lastMessageSeq)
-      return
-    }
-    const dm = directMessages.value.find(item => item.id === conversationId)
-    if (dm && dm.unread > 0 && typeof dm.lastMessageSeq === 'bigint' && dm.lastMessageSeq > 0n) {
-      sendReadMark(conversationId, dm.lastMessageSeq)
-    }
+    reconcileVisibleConversationUnread(conversationId)
   }
 
   function _onThreadSummaryUpdated(evt: ThreadSummaryUpdatedEvent) {
@@ -4422,8 +4607,13 @@ export const useChatStore = defineStore('chat', () => {
     const byId = new Map(existing.map(message => [message.id, message]))
     const changedSenderIds = new Set<string>()
     const unresolvedSenderIds = new Set<string>()
+    let latestLoadedSeq = 0n
+    let latestLoadedActivityAt: string | undefined
 
     for (const item of history) {
+      const sequence = BigInt(item.channel_seq)
+      if (sequence > latestLoadedSeq) latestLoadedSeq = sequence
+      latestLoadedActivityAt = latestActivityAt(latestLoadedActivityAt, item.created_at)
       if (registerUserIdentity(item.sender_id, item.sender_name, undefined, undefined, undefined, false)) {
         changedSenderIds.add(item.sender_id)
       }
@@ -4491,6 +4681,7 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
 
+    bumpConversationActivity(conversationId, latestLoadedActivityAt, latestLoadedSeq)
     refreshSenderLabelsForUsers(changedSenderIds)
     if (unresolvedSenderIds.size > 0) {
       void ensureUserDirectory().then(() => refreshSenderLabelsForUsers(unresolvedSenderIds))
@@ -4638,6 +4829,8 @@ export const useChatStore = defineStore('chat', () => {
     handlePresenceEvent,
     handleTypingEvent,
     handleServerEvent,
+    subscribeAppliedServerEvents,
+    subscribeRealtimeReady,
     applyLocalMessageDeleted,
     applyLocalMessageEdited,
     handleSendMessageAck,

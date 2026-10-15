@@ -1,6 +1,6 @@
 # Bot API
 
-This document describes the versioned HTTP API under `/api/bot/v1/*` that the external LLM Bot Service integrates over. The Bot Service consumes workspace events and acts in the workspace (posting replies, creating tasks, updating tasks, commenting on tasks, creating documents) exclusively through these endpoints — **bots never open a WebSocket connection**; the event stream is HTTP long-polling (`GET /api/bot/v1/events`).
+This document describes the versioned HTTP API under `/api/bot/v1/*` that the external LLM Bot Service integrates over. The Bot Service consumes workspace events and acts in the workspace (posting replies, creating tasks, updating tasks, adding public dictionary items, commenting on tasks, creating documents) exclusively through these endpoints — **bots never open a WebSocket connection**; the event stream is HTTP long-polling (`GET /api/bot/v1/events`).
 
 ## Authentication
 
@@ -239,7 +239,7 @@ Blank labels or malformed lookup paths return `400 {"error":"invalid enum lookup
           "name": "Version",
           "type": "enum",
           "required": false,
-          "dictionary": {"id": "…dictionary-uuid…", "code": "version", "current_version": 4}
+          "dictionary": {"id": "…dictionary-uuid…", "code": "version", "current_version": 4, "is_public": true}
         },
         {
           "id": "…field-uuid…",
@@ -258,7 +258,50 @@ Blank labels or malformed lookup paths return `400 {"error":"invalid enum lookup
 
 Templates are ordered by `sort_order`, then `prefix`; fields by `sort_order`, then `code`; statuses by `sort_order`, then `name`. Soft-deleted templates, fields, and statuses are excluded. `dictionary` is present for `enum` and `multi_enum` fields; `field_role` is omitted when unset. Dictionary items are not included; invalid enum-value errors list current candidates.
 
+`dictionary.is_public` is always included, including when `false`. Use `dictionary.id` and `is_public` to discover whether the bot can [add items to that dictionary](#create-a-public-dictionary-item).
+
 Use the template `prefix`, field `code`, and status `code` when writing tasks. Assignee and priority are template fields, when configured; neither is a separate top-level task parameter. Non-GET methods return `405 {"error":"method not allowed"}`.
+
+### Create a public dictionary item
+
+`POST /api/bot/v1/dictionaries/{dictionary_id}/items` — add one value to an existing public enum dictionary (`is_public = true`). This endpoint uses the bot's static Bearer token and the standard Bot API rate limits.
+
+Find `dictionary_id` in an enum or multi-enum field's `dictionary.id` from [Get task configuration](#get-task-configuration), and check `dictionary.is_public` before creating an item.
+
+```bash
+curl -X POST \
+  -H 'Authorization: Bearer YOUR_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"value":"Trade Financial API v1.114.0"}' \
+  http://localhost:8080/api/bot/v1/dictionaries/8f95ab87-18c0-45d0-a5a6-f2c472b1ea11/items
+```
+
+The body must contain exactly one JSON object with the single, case-sensitive key `value`, whose value must be a string of 1–64 Unicode characters after trimming surrounding whitespace. Missing values, `null`, other value types, unknown keys, and trailing JSON are rejected.
+
+Returns `201 Created`:
+
+```json
+{
+  "id": "c58d8eea-d091-4d89-9f53-15df9794c784",
+  "dictionary_version_id": "9c426940-3576-4826-a902-bfa9c1805840",
+  "value_code": "Trade Financial API v1.114.0",
+  "value_name": "Trade Financial API v1.114.0",
+  "sort_order": 5,
+  "is_active": true
+}
+```
+
+Both `value_code` and `value_name` use the trimmed input. The new item is active and appended to the latest dictionary version, preserving that version. If the dictionary has no version yet, one is created with the authenticated bot as its creator. The returned `sort_order` depends on the existing items.
+
+- `400`: invalid dictionary UUID, malformed request body, unsupported keys or value types, a blank value, or a trimmed value longer than 64 Unicode characters (`value must be at most 64 characters`).
+- `403`: the dictionary is private.
+- `404`: the dictionary does not exist.
+- `409`: the trimmed value exactly matches a `value_code` already in the latest version, including an inactive item. This duplicate check is case-sensitive.
+- `405`: a method other than POST. Authentication and rate-limit errors remain `401` and `429` as described above.
+
+There is no idempotency key. Retrying a successful request with the same value returns `409` while that code remains in the latest version. Task creation and updates never create dictionary items automatically: create the item explicitly first, then use its `value_code` in the task field.
+
+This endpoint only adds items to public dictionaries. Creating dictionaries, changing their settings, editing or deleting items, and managing dictionary versions are outside this Bot API.
 
 ### Look up users
 
@@ -325,7 +368,7 @@ Both task write endpoints require exactly one JSON object, with no trailing JSON
 
 Returns `201 Created` with the same DTO as [Get task context](#get-task-context), including the assigned `public_id`, parent information, and field values. The authenticated bot is the task's creator and updater. Validation failures create nothing. There is no idempotency key: retrying a successful create can create another task with the next sequence number.
 
-Task creation records existing task history but emits no workspace event or live WebSocket push. Attachments, template/status/dictionary administration, and task deletion are outside this API. Non-POST methods on `/tasks` return `405 {"error":"method not allowed"}`.
+Task creation records existing task history but emits no workspace event or live WebSocket push. Attachments, template/status administration, and task deletion are outside this API. Dictionary writes are limited to [adding items to public dictionaries](#create-a-public-dictionary-item). Non-POST methods on `/tasks` return `405 {"error":"method not allowed"}`.
 
 ### Update a task
 

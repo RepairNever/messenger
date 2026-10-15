@@ -31,7 +31,11 @@
         >
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
-              <h2 class="truncate text-sm font-semibold text-white">{{ item.title }}</h2>
+              <div class="flex min-w-0 items-center gap-2 text-app-text">
+                <DocumentKindIcon :kind="item.kind" class="text-app-muted" />
+                <h2 class="truncate text-sm font-semibold">{{ item.title }}</h2>
+                <span v-if="item.kind === 'spreadsheet'" class="shrink-0 text-xs text-app-muted">Spreadsheet</span>
+              </div>
               <p class="mt-1 text-xs uppercase tracking-wide text-gray-500">{{ item.teamspace_name }}</p>
             </div>
           </div>
@@ -47,6 +51,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useDocumentsStore } from '@/stores/documents'
+import DocumentKindIcon from './DocumentKindIcon.vue'
 
 const props = defineProps<{
   query: string
@@ -61,7 +66,7 @@ const documentsStore = useDocumentsStore()
 const headingText = computed(() => {
   const trimmedQuery = props.query.trim()
   if (!trimmedQuery) {
-    return 'Search by title or document body across joined teamspaces.'
+    return 'Search document and spreadsheet titles, or document content, across joined teamspaces.'
   }
   return `Results for "${trimmedQuery}"`
 })

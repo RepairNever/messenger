@@ -51,6 +51,7 @@ var eventTypeToProto = map[string]packetspb.EventType{
 	"task_status_changed":        packetspb.EventType_EVENT_TYPE_TASK_STATUS_CHANGED,
 	"call_raised_hands_changed":  packetspb.EventType_EVENT_TYPE_CALL_RAISED_HANDS_CHANGED,
 	"task_comment_created":       packetspb.EventType_EVENT_TYPE_TASK_COMMENT_CREATED,
+	"spreadsheet_changed":        packetspb.EventType_EVENT_TYPE_SPREADSHEET_CHANGED,
 }
 
 // protoToEventType is the reverse of eventTypeToProto.
@@ -94,6 +95,10 @@ func ValidateEventTypePayload(dbText string, evt *packetspb.ServerEvent) error {
 	}
 	// Verify the oneof payload case matches.
 	switch expected {
+	case packetspb.EventType_EVENT_TYPE_SPREADSHEET_CHANGED:
+		if evt.GetSpreadsheetChanged() == nil {
+			return fmt.Errorf("event_type %q requires spreadsheet_changed payload", dbText)
+		}
 	case packetspb.EventType_EVENT_TYPE_CONVERSATION_UPSERTED:
 		if evt.GetConversationUpserted() == nil {
 			return fmt.Errorf("event_type %q requires conversation_upserted payload", dbText)

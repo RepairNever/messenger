@@ -1,6 +1,6 @@
 {
   "name": "msgnr-web",
-  "version": "0.35.0",
+  "version": "0.38.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "build": "vue-tsc && vite build",
     "preview": "vite preview",
     "tauri:dev": "npm exec tauri dev -- --config src-tauri/tauri.conf.json",
-    "tauri:build": "npm exec tauri build -- --config src-tauri/tauri.conf.json",
+    "tauri:build": "node scripts/tauri-build.cjs",
     "tauri:build:minor": "node scripts/tauri-build-minor.cjs",
     "proto:gen": "cd ../api/proto && buf generate",
     "lint": "eslint . --ext .vue,.ts,.tsx",
@@ -29,6 +29,9 @@
     "@tiptap/extension-table-row": "^3.20.2",
     "@tiptap/starter-kit": "^3.20.2",
     "@tiptap/vue-3": "^3.20.2",
+    "@univerjs/core": "1.0.3",
+    "@univerjs/preset-sheets-core": "1.0.3",
+    "@univerjs/presets": "1.0.3",
     "ant-design-vue": "^4.2.6",
     "axios": "^1.13.6",
     "dexie": "^4.3.0",

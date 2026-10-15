@@ -181,7 +181,7 @@ func TestIntegration_BotAPI_TaskWriteDiscovery(t *testing.T) {
 				assert.NotContains(t, field, "field_role")
 			}
 			if code == "state" || code == "states" {
-				assert.Equal(t, map[string]any{"id": f.dictionary.ID.String(), "code": "write_state", "current_version": float64(f.version)}, field["dictionary"])
+				assert.Equal(t, map[string]any{"id": f.dictionary.ID.String(), "code": "write_state", "is_public": false, "current_version": float64(f.version)}, field["dictionary"])
 				assert.NotContains(t, field["dictionary"], "items")
 			} else {
 				assert.NotContains(t, field, "dictionary")

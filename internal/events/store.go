@@ -33,13 +33,23 @@ func NewStore(pool *pgxpool.Pool) *Store {
 
 // AppendEventTx inserts an event into workspace_events within the given
 // transaction and returns the stored row. The caller is responsible for
-// committing or rolling back the transaction.
+// committing or rolling back the transaction. Runtime writers must use BeginTx
+// before locking domain rows so allocation and commit order cannot diverge.
 func (s *Store) AppendEventTx(ctx context.Context, tx pgx.Tx, p AppendParams) (StoredEvent, error) {
 	if p.ProtoPayload != nil {
 		if err := ValidateEventTypePayload(p.EventType, p.ProtoPayload); err != nil {
 			metrics.EventOutboxAppendedTotal.WithLabelValues("error").Inc()
 			return StoredEvent{}, fmt.Errorf("AppendEventTx validate payload: %w", err)
 		}
+	}
+	locked, err := tryEventWriterLock(ctx, tx)
+	if err != nil {
+		metrics.EventOutboxAppendedTotal.WithLabelValues("error").Inc()
+		return StoredEvent{}, fmt.Errorf("AppendEventTx lock writer: %w", err)
+	}
+	if !locked {
+		metrics.EventOutboxAppendedTotal.WithLabelValues("error").Inc()
+		return StoredEvent{}, ErrEventWriterBusy
 	}
 
 	occurredAt := p.OccurredAt

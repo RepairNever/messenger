@@ -348,7 +348,7 @@ describe('wsStore state machine', () => {
     store.connect('/ws')
     mockSocket.simulateOpen()
 
-    store.sendUpdateReadCursor('channel-1', 9n)
+    expect(store.sendUpdateReadCursor('channel-1', 9n)).toBe(true)
 
     expect(groupCollapsedSpy.mock.calls.some(([message]: [string]) => message === '[WS SEND] updateReadCursorRequest')).toBe(true)
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.objectContaining({
@@ -360,6 +360,16 @@ describe('wsStore state machine', () => {
         }),
       }),
     }))
+  })
+
+  it('reports an unsent read cursor when the socket is not open', () => {
+    const store = useWsStore()
+
+    expect(store.sendUpdateReadCursor('channel-1', 9n)).toBe(false)
+    store.connect('/ws')
+    mockSocket.readyState = MockWebSocket.CLOSED
+    expect(store.sendUpdateReadCursor('channel-1', 9n)).toBe(false)
+    expect(mockSocket.sent).toHaveLength(0)
   })
 
   it('reports whether a thread subscription reached the websocket', () => {

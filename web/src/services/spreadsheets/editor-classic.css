@@ -1,0 +1,97 @@
+/* Keep the workbook and its body-mounted Univer menus in the stock light UI.
+   Apply the font only to native roots so font previews and descendants retain
+   their own font inheritance. */
+.spreadsheet-editor,
+:where([class*="univer-"]):not(:where([class*="univer-"] [class*="univer-"])) {
+  color-scheme: light;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+.spreadsheet-editor {
+  background: var(--univer-gray-0, #fff);
+  color: var(--univer-gray-900, #1b1c1f);
+}
+
+.spreadsheet-editor ::selection,
+:where([class*="univer-"], [class*="univer-"] *)::selection {
+  background: revert;
+  color: revert;
+}
+
+.spreadsheet-editor .spreadsheet-muted {
+  color: var(--univer-gray-500, #4e5565);
+}
+
+.spreadsheet-editor .spreadsheet-border {
+  border-color: var(--univer-gray-200, #e3e5ea);
+}
+
+.spreadsheet-editor .spreadsheet-surface {
+  background: var(--univer-gray-0, #fff);
+  color: var(--univer-gray-900, #1b1c1f);
+}
+
+.spreadsheet-editor .spreadsheet-notice {
+  background: var(--univer-gray-50, #f9fafb);
+}
+
+.spreadsheet-editor .spreadsheet-action {
+  color: var(--univer-primary-500, #466af7);
+}
+
+.spreadsheet-editor .spreadsheet-action:hover {
+  color: var(--univer-primary-600, #2c53f1);
+}
+
+.spreadsheet-editor .spreadsheet-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--univer-gray-300, #a8b0bd);
+}
+
+.spreadsheet-editor .spreadsheet-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--univer-gray-400, #7d8698);
+}
+
+.spreadsheet-editor .spreadsheet-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* HEADER_MENU is Univer's supported slot alongside the stock ribbon tabs.
+   Put both siblings in normal flow; its default absolute actions placement
+   would otherwise cover tabs as the Documents pane gets narrower. */
+.spreadsheet-editor [data-u-comp="ribbon-header-menu"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--univer-gray-200, #e3e5ea);
+}
+
+.spreadsheet-editor [data-u-comp="ribbon-header-menu"] > [role="tablist"] {
+  width: max-content;
+  flex-shrink: 0;
+  justify-content: flex-start;
+  overflow: visible;
+  padding-inline: 4px;
+}
+
+.spreadsheet-editor [data-u-comp="ribbon-header-menu"] > :not([role="tablist"]) {
+  position: static;
+  flex: 1;
+  min-width: 192px;
+}
+
+.spreadsheet-editor .spreadsheet-toolbar-mount {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+}
+
+.spreadsheet-editor .spreadsheet-toolbar-mount .spreadsheet-statusbar {
+  width: 100%;
+  padding-left: 0;
+  border: 0;
+}

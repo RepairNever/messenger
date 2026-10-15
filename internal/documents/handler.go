@@ -190,6 +190,7 @@ func (h *Handler) documentsCollection(w http.ResponseWriter, r *http.Request, p 
 	}
 
 	var req struct {
+		Kind             string     `json:"kind"`
 		TeamspaceID      uuid.UUID  `json:"teamspace_id"`
 		ParentDocumentID *uuid.UUID `json:"parent_document_id"`
 		Title            string     `json:"title"`
@@ -201,6 +202,7 @@ func (h *Handler) documentsCollection(w http.ResponseWriter, r *http.Request, p 
 	}
 
 	row, err := h.svc.CreateDocument(r.Context(), CreateDocumentParams{
+		Kind:             req.Kind,
 		TeamspaceID:      req.TeamspaceID,
 		ParentDocumentID: req.ParentDocumentID,
 		Title:            req.Title,
@@ -216,6 +218,10 @@ func (h *Handler) documentsCollection(w http.ResponseWriter, r *http.Request, p 
 
 func (h *Handler) documentItem(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/documents/")
+	if strings.Contains(rest, "/spreadsheet") {
+		h.spreadsheetRouter(w, r, p, rest)
+		return
+	}
 	if rest == "" {
 		writeJSON(w, http.StatusNotFound, errBody("not found"))
 		return
@@ -273,17 +279,30 @@ func (h *Handler) documentItem(w http.ResponseWriter, r *http.Request, p auth.Pr
 		writeJSON(w, http.StatusOK, row)
 	case http.MethodPatch:
 		var req struct {
-			Title           *string `json:"title"`
-			ContentMarkdown *string `json:"content_markdown"`
+			Title           *string         `json:"title"`
+			ContentMarkdown json.RawMessage `json:"content_markdown"`
+			Kind            json.RawMessage `json:"kind"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, errBody("invalid request body"))
 			return
 		}
+		if req.Kind != nil {
+			writeJSON(w, http.StatusBadRequest, errBody("document kind is immutable"))
+			return
+		}
+		var content *string
+		if req.ContentMarkdown != nil {
+			if err := json.Unmarshal(req.ContentMarkdown, &content); err != nil {
+				writeJSON(w, http.StatusBadRequest, errBody("invalid content_markdown"))
+				return
+			}
+		}
 		row, err := h.svc.UpdateDocument(r.Context(), id, UpdateDocumentParams{
-			Title:           req.Title,
-			ContentMarkdown: req.ContentMarkdown,
-			ActorID:         p.UserID,
+			Title:                   req.Title,
+			ContentMarkdown:         content,
+			ContentMarkdownProvided: req.ContentMarkdown != nil,
+			ActorID:                 p.UserID,
 		})
 		if err != nil {
 			h.serviceError(w, err)

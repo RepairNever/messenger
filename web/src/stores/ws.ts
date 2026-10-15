@@ -831,8 +831,8 @@ export const useWsStore = defineStore('ws', () => {
     }))
   }
 
-  function sendUpdateReadCursor(conversationId: string, lastReadSeq: bigint) {
-    sendEnvelope(create(EnvelopeSchema, {
+  function sendUpdateReadCursor(conversationId: string, lastReadSeq: bigint): boolean {
+    return sendEnvelope(create(EnvelopeSchema, {
       requestId: generateId(),
       traceId: generateId(),
       protocolVersion: PROTOCOL_VERSION,

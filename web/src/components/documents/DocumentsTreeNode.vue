@@ -36,31 +36,7 @@
         :class="selectedDocumentId === node.id ? 'text-white/80' : 'text-sidebar-textMuted'"
         aria-hidden="true"
       >
-        <svg
-          v-if="hasChildren"
-          class="h-4 w-4"
-          viewBox="0 0 20 20"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M2.75 6.75c0-1.24 1.01-2.25 2.25-2.25h2.59c.4 0 .78.16 1.06.44l.81.81c.28.28.66.44 1.06.44h4.73c1.24 0 2.25 1.01 2.25 2.25v6.06c0 1.24-1.01 2.25-2.25 2.25H5c-1.24 0-2.25-1.01-2.25-2.25V6.75z" />
-        </svg>
-        <svg
-          v-else
-          class="h-4 w-4"
-          viewBox="0 0 20 20"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M11.5 2.75H6.75c-1.24 0-2.25 1.01-2.25 2.25v10c0 1.24 1.01 2.25 2.25 2.25h6.5c1.24 0 2.25-1.01 2.25-2.25V6.75l-4-4z" />
-          <path d="M11.5 2.75V5.5c0 .69.56 1.25 1.25 1.25h2.75" />
-        </svg>
+        <DocumentKindIcon :kind="node.kind" :folder="hasChildren" />
       </span>
 
       <input
@@ -193,6 +169,7 @@
         :collapsed-document-ids="collapsedDocumentIds"
         @open-document="$emit('openDocument', $event)"
         @add-child="$emit('addChild', $event)"
+        @add-child-spreadsheet="$emit('addChildSpreadsheet', $event)"
         @toggle-collapse="$emit('toggleCollapse', $event)"
         @documents-deleted="$emit('documentsDeleted', $event)"
       />
@@ -221,6 +198,14 @@
           @click="addChildFromMenu"
         >
           Add child document
+        </button>
+        <button
+          type="button"
+          class="flex w-full items-center rounded px-3 py-2 text-left text-sm text-app-text transition-colors hover:bg-sidebar-hover"
+          :data-testid="`documents-node-menu-add-spreadsheet-${node.id}`"
+          @click="addChildSpreadsheetFromMenu"
+        >
+          Add child spreadsheet
         </button>
         <div class="my-1 border-t border-white/10" />
         <button
@@ -275,6 +260,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { SidebarDocumentNode } from '@/services/http/documentsApi'
 import { useDocumentsStore } from '@/stores/documents'
 import { normalizeDocumentNodes } from '@/utils/documentsUtils'
+import DocumentKindIcon from './DocumentKindIcon.vue'
 
 const props = defineProps<{
   node: SidebarDocumentNode
@@ -304,6 +290,7 @@ const renameInputRef = ref<HTMLInputElement | null>(null)
 const emit = defineEmits<{
   openDocument: [id: string]
   addChild: [id: string]
+  addChildSpreadsheet: [id: string]
   toggleCollapse: [id: string]
   documentsDeleted: [ids: string[]]
 }>()
@@ -403,6 +390,11 @@ async function commitRename() {
 function addChildFromMenu() {
   closeMenu()
   emit('addChild', props.node.id)
+}
+
+function addChildSpreadsheetFromMenu() {
+  closeMenu()
+  emit('addChildSpreadsheet', props.node.id)
 }
 
 async function setFavoriteState(isFavorite: boolean): Promise<boolean> {

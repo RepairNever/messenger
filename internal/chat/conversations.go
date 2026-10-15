@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"msgnr/internal/events"
 	packetspb "msgnr/internal/gen/proto"
 	"msgnr/internal/gen/queries"
 	"msgnr/internal/userstatus"
@@ -430,7 +431,7 @@ func (s *Service) RemoveConversationMember(ctx context.Context, requesterID uuid
 		}
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return RemoveConversationMemberResult{}, fmt.Errorf("chat.RemoveConversationMember begin tx: %w", err)
 	}
@@ -1042,7 +1043,7 @@ func (s *Service) InviteToChannel(ctx context.Context, requesterID, channelID, t
 	}
 
 	// 4. Insert or restore membership (idempotent).
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return InviteToChannelResult{}, fmt.Errorf("chat.InviteToChannel begin tx: %w", err)
 	}

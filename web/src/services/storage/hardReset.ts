@@ -3,6 +3,7 @@ import { clearAllData, deleteDatabase } from '@/services/db/cache'
 import { storage } from '@/services/storage/storageAdapter'
 import { clearStoredTokensAsync } from '@/services/storage/tokenStorage'
 import { COLOR_THEME_STORAGE_KEY } from '@/services/storage/colorThemeStorage'
+import { deleteSpreadsheetJournalDatabase } from '@/services/spreadsheets/journal'
 
 async function clearCacheStorage(): Promise<void> {
   if (typeof caches === 'undefined') return
@@ -48,6 +49,7 @@ export async function clearAllPersistedClientDataPreservingBackendUrl(): Promise
   await Promise.allSettled([
     clearAllData(),
     deleteDatabase(),
+    deleteSpreadsheetJournalDatabase(),
     clearCacheStorage(),
   ])
 

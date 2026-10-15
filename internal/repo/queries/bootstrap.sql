@@ -219,11 +219,18 @@ SELECT
             WHERE participant_msg.thread_root_id = ts.root_message_id
               AND participant_msg.sender_id = bs.user_id
           )
+          OR tr.user_id IS NOT NULL
         )
         AND COALESCE(tr.last_read_thread_seq, 0) < GREATEST(ts.next_thread_seq - 1, 0)
     )
   END)::bool AS has_unread_thread_replies,
-  COALESCE(mr.last_read_seq, 0) AS last_read_seq
+  COALESCE(mr.last_read_seq, 0) AS last_read_seq,
+  COALESCE(cur.revision, 0)::bigint AS revision,
+  c.next_seq AS last_message_seq,
+  COALESCE((
+    SELECT MAX(m_root.channel_seq) FROM messages m_root
+    WHERE m_root.channel_id = c.id AND m_root.thread_root_id IS NULL
+  ), 0)::bigint AS last_root_message_seq
 FROM bootstrap_session_items bsi
 JOIN bootstrap_sessions bs ON bs.id = bsi.session_id
 JOIN channels c ON c.id = bsi.conversation_id
@@ -232,6 +239,8 @@ JOIN channel_members cm_self ON cm_self.channel_id = c.id
   AND cm_self.is_archived = false
 LEFT JOIN message_reads mr ON mr.channel_id = c.id
   AND mr.user_id = bs.user_id
+LEFT JOIN conversation_unread_revisions cur ON cur.channel_id = c.id
+  AND cur.user_id = bs.user_id
 WHERE bsi.session_id = @session_id
   AND bsi.page_index = @page_index
 ORDER BY bsi.ordinal ASC;

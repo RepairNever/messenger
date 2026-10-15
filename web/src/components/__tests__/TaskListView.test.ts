@@ -1,15 +1,17 @@
-import { reactive } from 'vue'
+import { defineComponent, reactive, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TaskListView from '@/components/tasks/TaskListView.vue'
 import { storage } from '@/services/storage/storageAdapter'
+import { useTaskFilters } from '@/composables/useTaskFilters'
+import type { TaskListParams } from '@/services/http/tasksApi'
 
 const tasksStoreMock = reactive({
   activeStatuses: [] as Array<{ id: string; name: string }>,
   activeTemplates: [] as Array<{ id: string; prefix: string }>,
   assigneeFieldIds: [] as string[],
   users: [] as Array<{ id: string; display_name: string; email: string; avatar_url: string }>,
-  listParams: { page: 1, page_size: 50 },
+  listParams: { page: 1, page_size: 50 } as TaskListParams,
   taskListTotal: 1,
   taskListLoading: false,
   taskListError: null as string | null,
@@ -50,8 +52,13 @@ const tasksStoreMock = reactive({
   loadConfig: vi.fn(async () => {}),
   loadAllTemplateFields: vi.fn(async () => {}),
   loadUsers: vi.fn(async () => {}),
+  filterableEnumDictionaries: [],
+  loadFilterableDictionaries: vi.fn(async () => {}),
+  loadEnumItemsFor: vi.fn(async () => {}),
   setListParams: vi.fn(),
   loadTaskList: vi.fn(),
+  loadGroupedTaskList: vi.fn(),
+  groupedTaskPortionLimit: 50,
   loadMoreGroupedStatus: vi.fn(),
 })
 
@@ -61,11 +68,156 @@ vi.mock('@/stores/tasks', () => ({
 
 describe('TaskListView', () => {
   beforeEach(() => {
+    vi.useRealTimers()
     storage.clear()
     vi.clearAllMocks()
     tasksStoreMock.listParams = { page: 1, page_size: 50 }
     tasksStoreMock.taskList = []
     tasksStoreMock.taskListTotal = 1
+    tasksStoreMock.taskListLoading = false
+    tasksStoreMock.taskListError = null
+    tasksStoreMock.activeTemplates = []
+    const filters = useTaskFilters()
+    filters.searchInput.value = ''
+    filters.filtersVisible.value = false
+    filters.selectedStatusIds.value = []
+    filters.selectedTemplateId.value = null
+    filters.selectedAssigneeIds.value = []
+    filters.selectedDictionaryEnumCodes.value = {}
+    filters.createdFrom.value = ''
+    filters.createdTo.value = ''
+    filters.showSubtasks.value = false
+    tasksStoreMock.setListParams.mockReset()
+    tasksStoreMock.loadTaskList.mockReset()
+    tasksStoreMock.loadGroupedTaskList.mockReset()
+  })
+
+  it('restores the selected template, filters, sort and page immediately while refreshing after a card', async () => {
+    vi.useFakeTimers()
+    tasksStoreMock.activeTemplates = [
+      { id: 'tpl-sidebar', prefix: 'SIDE' },
+      { id: 'tpl-local', prefix: 'LOCAL' },
+    ]
+    tasksStoreMock.taskList = [{
+      id: 'task-1', public_id: 'LOCAL-1', title: 'Remembered task', status_id: 'st-1',
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z',
+    }]
+    tasksStoreMock.taskListTotal = 120
+    tasksStoreMock.setListParams.mockImplementation((params: Partial<TaskListParams>) => {
+      tasksStoreMock.listParams = { ...tasksStoreMock.listParams, ...params, page: 1 }
+    })
+    const showList = ref(true)
+    const host = defineComponent({
+      components: { TaskListView },
+      setup: () => ({ showList }),
+      template: '<KeepAlive><TaskListView v-if="showList" template-filter="tpl-sidebar" /></KeepAlive>',
+    })
+    const wrapper = mount(host, {
+      global: { stubs: {
+        UserAvatar: { template: '<div />' },
+        TaskRow: { props: ['item'], template: '<tr><td>{{ item.title }}</td></tr>' },
+        SortIcon: { template: '<span />' },
+      } },
+    })
+    await flushPromises()
+    await wrapper.get('input[placeholder="Search by ID, title, description…"]').setValue('  remembered search  ')
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+    const filters = useTaskFilters()
+    filters.filtersVisible.value = true
+    await flushPromises()
+    const templateChip = wrapper.findAll('button.filter-chip').find(button => button.text().includes('Template'))!
+    await templateChip.trigger('click')
+    await wrapper.findAll('button.dropdown-item').find(button => button.text().includes('LOCAL'))!.trigger('click')
+    filters.selectedStatusIds.value = ['st-1']
+    filters.createdFrom.value = '2026-10-01'
+    filters.showSubtasks.value = true
+    await flushPromises()
+    await wrapper.findAll('th').find(column => column.text().includes('Title'))!.trigger('click')
+    tasksStoreMock.listParams.page = 3
+
+    showList.value = false
+    await flushPromises()
+    const rememberedParams = { ...tasksStoreMock.listParams }
+    tasksStoreMock.setListParams.mockClear()
+    tasksStoreMock.loadConfig.mockClear()
+    let finishRefresh!: () => void
+    tasksStoreMock.loadTaskList.mockImplementation(() => {
+      tasksStoreMock.taskListLoading = true
+      return new Promise<void>(resolve => { finishRefresh = resolve })
+    })
+
+    showList.value = true
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Remembered task')
+    expect(filters.selectedTemplateId.value).toBe('tpl-local')
+    expect(tasksStoreMock.listParams).toEqual(rememberedParams)
+    expect(rememberedParams).toMatchObject({
+      search: 'remembered search',
+      prefixes: ['LOCAL'], status_ids: ['st-1'], created_from: '2026-10-01',
+      include_subtasks: true, sort_by: 'title', sort_order: 'asc', page: 3,
+    })
+    expect(tasksStoreMock.setListParams).not.toHaveBeenCalled()
+    expect(tasksStoreMock.loadConfig).not.toHaveBeenCalled()
+    expect(tasksStoreMock.loadTaskList).toHaveBeenCalledTimes(1)
+    expect(tasksStoreMock.loadGroupedTaskList).not.toHaveBeenCalled()
+    finishRefresh()
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('refreshes grouped data once when returning to a cached grouped list', async () => {
+    storage.setItem('msgnr:tasks:view-mode:v1', 'grouped')
+    const showList = ref(true)
+    const host = defineComponent({
+      components: { TaskListView }, setup: () => ({ showList }),
+      template: '<KeepAlive><TaskListView v-if="showList" :template-filter="null" /></KeepAlive>',
+    })
+    const wrapper = mount(host, { global: { stubs: {
+      TaskTrackerFilters: { template: '<div />' }, UserAvatar: { template: '<div />' },
+    } } })
+    await flushPromises()
+    expect(tasksStoreMock.loadGroupedTaskList).not.toHaveBeenCalled()
+    showList.value = false
+    await flushPromises()
+    showList.value = true
+    await flushPromises()
+    expect(tasksStoreMock.loadGroupedTaskList).toHaveBeenCalledExactlyOnceWith(undefined, 50)
+    expect(tasksStoreMock.loadTaskList).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('applies a sidebar template change once when the cached list returns', async () => {
+    tasksStoreMock.activeTemplates = [
+      { id: 'tpl-1', prefix: 'BUG' }, { id: 'tpl-2', prefix: 'WORK' },
+    ]
+    const showList = ref(true)
+    const template = ref('tpl-1')
+    const host = defineComponent({
+      components: { TaskListView }, setup: () => ({ showList, template }),
+      template: '<KeepAlive><TaskListView v-if="showList" :template-filter="template" /></KeepAlive>',
+    })
+    const wrapper = mount(host, { global: { stubs: {
+      UserAvatar: { template: '<div />' }, TaskRow: { template: '<tr />' }, SortIcon: { template: '<span />' },
+    } } })
+    await flushPromises()
+    showList.value = false
+    await flushPromises()
+    tasksStoreMock.setListParams.mockClear()
+    template.value = 'tpl-2'
+    useTaskFilters().selectedStatusIds.value = ['st-1']
+    await flushPromises()
+    expect(tasksStoreMock.setListParams).not.toHaveBeenCalled()
+
+    showList.value = true
+    await flushPromises()
+    expect(tasksStoreMock.setListParams).toHaveBeenCalledTimes(1)
+    expect(tasksStoreMock.setListParams).toHaveBeenCalledWith(expect.objectContaining({
+      prefixes: ['WORK'], status_ids: ['st-1'], page: 1,
+    }), 'list')
+    expect(tasksStoreMock.loadTaskList).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it('renders list/grouped switcher without kanban option', async () => {

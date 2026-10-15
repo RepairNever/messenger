@@ -239,6 +239,7 @@ let contentDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let contentMaxFlushTimer: ReturnType<typeof setTimeout> | null = null
 let contentRetryTimer: ReturnType<typeof setTimeout> | null = null
 let contentRetryDelayMs = 1000
+let contentDocumentId: string | null = null
 
 const historyModalOpen = ref(false)
 const historyLoading = ref(false)
@@ -249,7 +250,9 @@ const historyPreviewDraft = ref('')
 const historyApplying = ref(false)
 const historyApplyError = ref('')
 
-const documentItem = computed(() => documentsStore.selectedDocument)
+const documentItem = computed(() => documentsStore.selectedDocument?.kind === 'spreadsheet'
+  ? null
+  : documentsStore.selectedDocument)
 const collabDocumentId = computed(() => documentItem.value?.id ?? null)
 const collabUser = computed<DocumentContentCollabUser | null>(() => {
   const user = authStore.user
@@ -301,6 +304,7 @@ watch(
     }
 
     titleDraft.value = documentItem.value?.title ?? ''
+    contentDocumentId = next ?? null
     hydratingContent.value = true
     contentDraft.value = documentItem.value?.content_markdown ?? ''
     lastSavedContent.value = documentItem.value?.content_markdown ?? null
@@ -589,8 +593,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   clearContentTimers()
-  if (documentItem.value) {
-    void persistContent(documentItem.value.id, contentDraft.value, true)
+  if (contentDocumentId) {
+    void persistContent(contentDocumentId, contentDraft.value, true)
   }
 })
 </script>

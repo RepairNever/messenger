@@ -1,4 +1,3 @@
-// @ts-expect-error The app does not ship Node types, but Vitest runs this file in Node.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { cssThemeTokenNames } from '@/composables/useColorTheme'

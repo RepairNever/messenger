@@ -1,11 +1,17 @@
 <template>
   <div
+    ref="messageRow"
+    data-testid="message-row"
     class="group relative flex gap-2.5 rounded-xl px-2 py-[3px] transition-colors hover:bg-chat-msgHover"
     :class="[
       showHeader ? 'mt-2' : 'mt-0',
       isOwnMessage ? 'justify-end' : '',
       isActiveThread ? 'bg-accent/5' : '',
     ]"
+    @mouseenter="groupedActionsHovered = true"
+    @mouseleave="groupedActionsHovered = false"
+    @focusin="groupedActionsFocused = true"
+    @focusout="handleGroupedActionsFocusOut"
   >
     <!-- Active thread indicator -->
     <div
@@ -15,6 +21,61 @@
       <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
         <path d="M9 6l6 6-6 6" />
       </svg>
+    </div>
+
+    <!-- Keep grouped actions beside the bubble; overlay the row only when that position would clip. -->
+    <div
+      v-if="!showHeader"
+      ref="groupedActions"
+      data-testid="grouped-message-actions"
+      class="pointer-events-none absolute top-[3px] z-30 flex w-max items-center gap-0.5 rounded-md p-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+      :class="groupedActionsOverlay ? 'bg-chat-header shadow-sm ring-1 ring-inset ring-chat-border' : 'bg-inherit'"
+      :style="{ left: `${groupedActionsLeft}px` }"
+    >
+      <button
+        v-if="canSaveMessage"
+        data-testid="save-message-button"
+        class="h-7 w-7 rounded-full flex items-center justify-center transition-colors"
+        :class="message.isSaved ? 'text-cyan-300 hover:text-cyan-200 hover:bg-app-hover' : 'text-app-muted hover:text-app-text hover:bg-app-hover'"
+        :title="message.isSaved ? 'Unsave message' : 'Save message'"
+        @click.stop="toggleSaved"
+      >
+        <svg class="w-4 h-4" :fill="message.isSaved ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M19 21 12 17 5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+        </svg>
+      </button>
+      <button
+        v-if="!hasReactions && showFirstReactionAction"
+        data-testid="first-reaction-button"
+        ref="pickerToggleButton"
+        class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
+        title="Add reaction"
+        @click.stop="togglePickerButton"
+      >
+        <span class="text-sm leading-none font-semibold">😎</span>
+      </button>
+      <button
+        v-if="!threadReplyCount && showThreadAction && !isThreadReply"
+        data-testid="new-thread-button"
+        class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
+        title="Reply in thread"
+        @click="$emit('openThread', message)"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+      </button>
+      <!-- ⋯ More actions -->
+      <button
+        ref="contextMenuTrigger"
+        class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
+        title="More actions"
+        @click.stop="toggleContextMenu"
+      >
+        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+          <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
+        </svg>
+      </button>
     </div>
 
     <!-- Avatar column (incoming only; own messages are right-aligned without one) -->
@@ -31,6 +92,8 @@
 
     <!-- Stack: header line, bubble, attachments, thread chip, reactions -->
     <div
+      ref="messageStack"
+      data-testid="message-stack"
       class="relative flex w-fit min-w-0 max-w-full flex-col"
       :class="[
         isOwnMessage ? 'items-end' : 'items-start',
@@ -209,58 +272,6 @@
           </svg>
           Not sent
         </span>
-      </div>
-
-      <!-- Hover actions for grouped messages (no header row); hug the bubble side -->
-      <div
-        v-if="!showHeader"
-        class="absolute top-0 z-30 flex items-center gap-0.5 rounded-md bg-inherit p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-        :class="isOwnMessage ? 'right-full mr-1' : 'left-full ml-1'"
-      >
-        <button
-          v-if="canSaveMessage"
-          data-testid="save-message-button"
-          class="h-7 w-7 rounded-full flex items-center justify-center transition-colors"
-          :class="message.isSaved ? 'text-cyan-300 hover:text-cyan-200 hover:bg-app-hover' : 'text-app-muted hover:text-app-text hover:bg-app-hover'"
-          :title="message.isSaved ? 'Unsave message' : 'Save message'"
-          @click.stop="toggleSaved"
-        >
-          <svg class="w-4 h-4" :fill="message.isSaved ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path d="M19 21 12 17 5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-          </svg>
-        </button>
-        <button
-          v-if="!hasReactions && showFirstReactionAction"
-          data-testid="first-reaction-button"
-          ref="pickerToggleButton"
-          class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
-          title="Add reaction"
-          @click.stop="togglePickerButton"
-        >
-          <span class="text-sm leading-none font-semibold">😎</span>
-        </button>
-        <button
-          v-if="!threadReplyCount && showThreadAction && !isThreadReply"
-          data-testid="new-thread-button"
-          class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
-          title="Reply in thread"
-          @click="$emit('openThread', message)"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-          </svg>
-        </button>
-        <!-- ⋯ More actions -->
-        <button
-          ref="contextMenuTrigger"
-          class="h-7 w-7 rounded-full flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-hover transition-colors"
-          title="More actions"
-          @click.stop="toggleContextMenu"
-        >
-          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-            <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
-          </svg>
-        </button>
       </div>
 
       <!-- Send status for grouped messages (no header row) -->
@@ -807,6 +818,15 @@ const contextMenuStyle = ref<{ top: string; left: string }>({ top: '0px', left: 
 const emojiPickerRoot = ref<HTMLElement | null>(null)
 const pickerToggleButton = ref<HTMLElement | null>(null)
 const contextMenuTrigger = ref<HTMLElement | null>(null)
+const messageRow = ref<HTMLElement | null>(null)
+const messageStack = ref<HTMLElement | null>(null)
+const groupedActions = ref<HTMLElement | null>(null)
+const groupedActionsHovered = ref(false)
+const groupedActionsFocused = ref(false)
+const groupedActionsOverlay = ref(false)
+const groupedActionsLeft = ref(0)
+let groupedActionsResizeObserver: ResizeObserver | null = null
+let groupedActionsClipAncestors: HTMLElement[] = []
 const pickerComponent = shallowRef<any>(null)
 const emojiIndex = shallowRef<any>(null)
 const emojiPickerLoading = ref(false)
@@ -968,6 +988,82 @@ const canSaveEdit = computed(() =>
   && isMessageBodyWithinLimit(editBody.value),
 )
 const editBodyTooLong = computed(() => !isMessageBodyWithinLimit(editBody.value))
+
+function handleGroupedActionsFocusOut(event: FocusEvent) {
+  groupedActionsFocused.value = event.relatedTarget instanceof Node
+    && Boolean(messageRow.value?.contains(event.relatedTarget))
+}
+
+function updateGroupedActionsPosition() {
+  const row = messageRow.value
+  const stack = messageStack.value
+  const actions = groupedActions.value
+  if (!row || !stack || !actions) return
+
+  const rowRect = row.getBoundingClientRect()
+  const stackRect = stack.getBoundingClientRect()
+  const actionsWidth = actions.getBoundingClientRect().width
+  let clipLeft = 0
+  let clipRight = document.documentElement.clientWidth || window.innerWidth
+  for (const ancestor of groupedActionsClipAncestors) {
+    const rect = ancestor.getBoundingClientRect()
+    const left = rect.left + ancestor.clientLeft
+    clipLeft = Math.max(clipLeft, left)
+    clipRight = Math.min(clipRight, left + ancestor.clientWidth)
+  }
+
+  const besideLeft = isOwnMessage.value
+    ? stackRect.left - 4 - actionsWidth
+    : stackRect.right + 4
+  const wouldClip = besideLeft < clipLeft || besideLeft + actionsWidth > clipRight
+  const overlayLeft = isOwnMessage.value
+    ? rowRect.left + 8
+    : rowRect.right - 8 - actionsWidth
+  const left = wouldClip
+    ? Math.max(clipLeft, Math.min(overlayLeft, clipRight - actionsWidth))
+    : besideLeft
+
+  // The inset ring leaves the measured width unchanged when switching modes.
+  groupedActionsOverlay.value = wouldClip
+  groupedActionsLeft.value = left - rowRect.left
+}
+
+function stopGroupedActionsTracking() {
+  groupedActionsResizeObserver?.disconnect()
+  groupedActionsResizeObserver = null
+  groupedActionsClipAncestors = []
+  window.removeEventListener('resize', updateGroupedActionsPosition)
+  window.removeEventListener('scroll', updateGroupedActionsPosition, true)
+}
+
+watch(
+  [messageRow, messageStack, groupedActions, () => groupedActionsHovered.value || groupedActionsFocused.value, isOwnMessage],
+  () => {
+    stopGroupedActionsTracking()
+    const row = messageRow.value
+    const stack = messageStack.value
+    const actions = groupedActions.value
+    if (!row || !stack || !actions || !(groupedActionsHovered.value || groupedActionsFocused.value)) return
+
+    for (let ancestor = row.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (['auto', 'scroll', 'hidden', 'clip', 'overlay'].includes(getComputedStyle(ancestor).overflowX)) {
+        groupedActionsClipAncestors.push(ancestor)
+      }
+    }
+    updateGroupedActionsPosition()
+
+    // Track geometry only for the row whose actions are currently visible.
+    if (typeof ResizeObserver !== 'undefined') {
+      groupedActionsResizeObserver = new ResizeObserver(updateGroupedActionsPosition)
+      for (const element of [row, stack, actions, ...groupedActionsClipAncestors]) {
+        groupedActionsResizeObserver.observe(element)
+      }
+    }
+    window.addEventListener('resize', updateGroupedActionsPosition)
+    window.addEventListener('scroll', updateGroupedActionsPosition, true)
+  },
+  { flush: 'post' },
+)
 
 const lastReplyAtLabel = computed(() => {
   const summary = chat.threadSummaries[props.message.id]
@@ -2043,6 +2139,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopGroupedActionsTracking()
   mediaLifecycleActive = false
   imagePreviewObserver?.disconnect()
   imagePreviewObserver = null
@@ -2202,10 +2299,10 @@ function toggleContextMenu() {
   if (trigger) {
     const rect = trigger.getBoundingClientRect()
     // Align right edge of menu with right edge of trigger; appear below
-    const menuWidth = 160
+    const menuWidth = 176 // min-w-44
     contextMenuStyle.value = {
       top: `${rect.bottom + 4}px`,
-      left: `${rect.right - menuWidth}px`,
+      left: `${Math.max(8, rect.right - menuWidth)}px`,
     }
   }
   showContextMenu.value = true

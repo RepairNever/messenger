@@ -287,7 +287,7 @@ func (s *Service) UpdateProfile(ctx context.Context, userID uuid.UUID, displayNa
 		return UserInfo{}, fmt.Errorf("%w: database is not configured", ErrProfileBadRequest)
 	}
 
-	tx, err := s.db.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.db)
 	if err != nil {
 		return UserInfo{}, fmt.Errorf("auth: begin update profile tx: %w", err)
 	}
@@ -412,7 +412,7 @@ func (s *Service) updateAvatarURL(ctx context.Context, userID uuid.UUID, avatarU
 		return UserInfo{}, "", fmt.Errorf("%w: database is not configured", ErrProfileBadRequest)
 	}
 
-	tx, err := s.db.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.db)
 	if err != nil {
 		return UserInfo{}, "", fmt.Errorf("auth: begin avatar update tx: %w", err)
 	}
@@ -465,7 +465,7 @@ func (s *Service) SetCustomStatus(ctx context.Context, userID uuid.UUID, text, e
 		return UserInfo{}, fmt.Errorf("%w: database is not configured", ErrProfileBadRequest)
 	}
 
-	tx, err := s.db.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.db)
 	if err != nil {
 		return UserInfo{}, fmt.Errorf("auth: begin custom status update tx: %w", err)
 	}
@@ -502,7 +502,7 @@ func (s *Service) ClearCustomStatus(ctx context.Context, userID uuid.UUID) (User
 		return UserInfo{}, fmt.Errorf("%w: database is not configured", ErrProfileBadRequest)
 	}
 
-	tx, err := s.db.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.db)
 	if err != nil {
 		return UserInfo{}, fmt.Errorf("auth: begin custom status clear tx: %w", err)
 	}
@@ -784,6 +784,11 @@ func (s *Service) CanReceiveEventWithConversationAccess(
 	hasConversation func(conversationID string) bool,
 	grantConversation func(conversationID string),
 ) (bool, string) {
+	if evt.GetSpreadsheetChanged() != nil {
+		// Document access is independent of the conversation cache and must be
+		// checked against current membership, including after revocation.
+		return false, "document_access_required"
+	}
 	if payload := evt.GetReadCounterUpdated(); payload != nil {
 		if payload.GetUserId() == principal.UserID.String() {
 			return true, "allowed_self_scoped"
@@ -830,6 +835,19 @@ func (s *Service) CanReceiveEventWithConversationAccess(
 // For channel-scoped events (conversation_id set), it verifies channel membership.
 // For workspace-wide events (conversation_id empty), all authenticated users can receive.
 func (s *Service) CanReceiveEvent(ctx context.Context, principal Principal, evt *packetspb.ServerEvent) bool {
+	if payload := evt.GetSpreadsheetChanged(); payload != nil {
+		if s.queries == nil {
+			return false
+		}
+		documentID, err := uuid.Parse(payload.GetDocumentId())
+		if err != nil {
+			return false
+		}
+		allowed, err := s.queries.CanReadSpreadsheet(ctx, queries.CanReadSpreadsheetParams{
+			DocumentID: documentID, UserID: principal.UserID,
+		})
+		return err == nil && allowed
+	}
 	if payload := evt.GetReadCounterUpdated(); payload != nil {
 		return payload.GetUserId() == principal.UserID.String()
 	}

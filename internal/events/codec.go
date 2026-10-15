@@ -33,6 +33,12 @@ func buildServerEventFromStored(
 	}
 
 	switch evtType {
+	case packetspb.EventType_EVENT_TYPE_SPREADSHEET_CHANGED:
+		msg := &packetspb.SpreadsheetChangedEvent{}
+		if err := payloadUnmarshalOptions.Unmarshal(payloadJSON, msg); err != nil {
+			return nil, fmt.Errorf("decode spreadsheet_changed payload: %w", err)
+		}
+		evt.Payload = &packetspb.ServerEvent_SpreadsheetChanged{SpreadsheetChanged: msg}
 	case packetspb.EventType_EVENT_TYPE_CONVERSATION_UPSERTED:
 		msg := &packetspb.ConversationUpsertedEvent{}
 		if err := payloadUnmarshalOptions.Unmarshal(payloadJSON, msg); err != nil {

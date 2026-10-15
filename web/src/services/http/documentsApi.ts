@@ -53,11 +53,14 @@ export interface Teamspace {
   updated_at: string
 }
 
+export type DocumentKind = 'markdown' | 'spreadsheet'
+
 export interface SidebarDocumentNode {
   id: string
   teamspace_id: string
   parent_document_id: string | null
   title: string
+  kind?: DocumentKind
   is_favorite: boolean
   favorited_at: string | null
   children: SidebarDocumentNode[]
@@ -76,6 +79,7 @@ export interface DocumentItem {
   parent_document_id: string | null
   parent_title: string | null
   title: string
+  kind?: DocumentKind
   content_markdown: string | null
   created_by: string
   updated_by: string
@@ -88,6 +92,7 @@ export interface DocumentSearchResult {
   teamspace_id: string
   teamspace_name: string
   title: string
+  kind?: DocumentKind
   snippet: string
 }
 
@@ -105,6 +110,10 @@ export interface DocumentHistoryEditor {
 }
 
 export interface DocumentHistoryItem {
+  id?: string
+  kind?: DocumentKind
+  spreadsheet_revision?: number
+  spreadsheet_structure_epoch?: number
   title: string
   content_markdown: string | null
   edited_by: string
@@ -132,6 +141,7 @@ export interface CreateDocumentPayload {
   teamspace_id: string
   parent_document_id?: string | null
   title: string
+  kind?: DocumentKind
   content_markdown?: string | null
 }
 

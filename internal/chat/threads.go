@@ -191,12 +191,7 @@ func (s *Service) SubscribeThread(ctx context.Context, p SubscribeThreadParams) 
 		return SubscribeThreadResult{}, fmt.Errorf("chat.SubscribeThread upsert thread read: %w", err)
 	}
 
-	lastReadSeq, err := s.loadLastReadSeqTx(ctx, tx, p.ChannelID, p.RequesterID)
-	if err != nil {
-		return SubscribeThreadResult{}, fmt.Errorf("chat.SubscribeThread get read cursor: %w", err)
-	}
-
-	counter, err := s.buildUnreadCounterTx(ctx, tx, p.ChannelID, p.RequesterID, lastReadSeq)
+	counter, err := s.buildUnreadCounterTx(ctx, tx, p.ChannelID, p.RequesterID)
 	if err != nil {
 		return SubscribeThreadResult{}, fmt.Errorf("chat.SubscribeThread build unread counter: %w", err)
 	}

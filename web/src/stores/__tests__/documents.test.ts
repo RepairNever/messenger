@@ -62,6 +62,44 @@ describe('documents store', () => {
     vi.useRealTimers()
   })
 
+  it('keeps the spreadsheet kind in creation, sidebar, and favorites', async () => {
+    const store = useDocumentsStore()
+    store.sidebarTeamspaces = [{ id: 'teamspace-1', name: 'Alpha', documents: [] }]
+    documentsApiMocks.documentsCreateDocument.mockResolvedValue({ id: 'sheet-1', teamspace_id: 'teamspace-1', parent_document_id: null, title: 'Budget', kind: 'spreadsheet' })
+    await store.createDocument({ teamspace_id: 'teamspace-1', title: 'Budget', kind: 'spreadsheet' })
+    expect(documentsApiMocks.documentsCreateDocument).toHaveBeenCalledWith({ teamspace_id: 'teamspace-1', title: 'Budget', kind: 'spreadsheet' })
+    expect(store.selectedDocument?.kind).toBe('spreadsheet')
+    expect(store.sidebarTeamspaces[0].documents[0].kind).toBe('spreadsheet')
+
+    documentsApiMocks.documentsFavoriteDocument.mockResolvedValue({ document_id: 'sheet-1', is_favorite: true, favorited_at: '2026-10-08T12:00:00Z' })
+    await store.favoriteDocument('sheet-1')
+    expect(store.favoriteDocuments[0].kind).toBe('spreadsheet')
+    expect(documentsApiMocks.documentsUpdateDocumentContent).not.toHaveBeenCalled()
+  })
+
+  it('uses Markdown for a newly returned legacy document without kind', async () => {
+    const store = useDocumentsStore()
+    store.sidebarTeamspaces = [{ id: 'teamspace-1', name: 'Alpha', documents: [] }]
+    documentsApiMocks.documentsCreateDocument.mockResolvedValue({ id: 'legacy-doc', teamspace_id: 'teamspace-1', parent_document_id: null, title: 'Notes' })
+    await store.createDocument({ teamspace_id: 'teamspace-1', title: 'Notes' })
+    expect(store.sidebarTeamspaces[0].documents[0].kind).toBe('markdown')
+  })
+
+  it('keeps a newly created spreadsheet selected when an older Markdown fetch completes', async () => {
+    const store = useDocumentsStore()
+    let finishOld!: (value: unknown) => void
+    documentsApiMocks.documentsGetDocument.mockImplementation(() => new Promise(resolve => { finishOld = resolve }))
+    const oldSelection = store.selectDocument('old-markdown', true)
+    expect(store.documentLoading).toBe(true)
+    documentsApiMocks.documentsCreateDocument.mockResolvedValue({ id: 'new-sheet', kind: 'spreadsheet', title: 'Budget', teamspace_id: 'space', parent_document_id: null })
+    await store.createDocument({ kind: 'spreadsheet', title: 'Budget', teamspace_id: 'space' })
+    finishOld({ id: 'old-markdown', kind: 'markdown', title: 'Notes' })
+    await oldSelection
+    expect(store.selectedDocument?.id).toBe('new-sheet')
+    expect(store.documentLoading).toBe(false)
+    expect(store.documentError).toBeNull()
+  })
+
   it.each(['admin', 'owner'])('loads only active bot candidates for %s', async role => {
     botMocks.auth.effectiveRole = role
     botMocks.adminListUsers.mockResolvedValue([
@@ -73,6 +111,45 @@ describe('documents store', () => {
     await store.loadBots()
     expect(store.bots.map(bot => bot.id)).toEqual(['active-bot'])
     expect(store.users).toEqual([])
+  })
+
+  it('refreshes spreadsheet metadata and sidebar titles without hiding the editor', async () => {
+    const store = useDocumentsStore()
+    store.selectedDocument = { id: 'sheet', kind: 'spreadsheet', title: 'Current' } as any
+    store.sidebarTeamspaces = [{ id: 'space', documents: [{ id: 'sheet', title: 'Current', children: [], favorited_at: 'date' }] }] as any
+    documentsApiMocks.documentsGetDocument.mockResolvedValueOnce({ id: 'sheet', kind: 'spreadsheet', title: 'Restored' })
+    const loading = store.refreshDocumentMetadata('sheet')
+    expect(store.documentLoading).toBe(false)
+    await loading
+    expect(store.selectedDocument?.title).toBe('Restored')
+    expect(store.sidebarTeamspaces[0].documents[0].title).toBe('Restored')
+  })
+
+  it('does not replace a new selection with an older spreadsheet metadata response', async () => {
+    const store = useDocumentsStore()
+    store.selectedDocument = { id: 'sheet', kind: 'spreadsheet', title: 'Current' } as any
+    let finish!: (value: unknown) => void
+    documentsApiMocks.documentsGetDocument.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const loading = store.refreshDocumentMetadata('sheet')
+    store.selectedDocument = { id: 'other', kind: 'markdown' } as any
+    finish({ id: 'sheet', kind: 'spreadsheet', title: 'Restored' })
+    await loading
+    expect(store.selectedDocument?.id).toBe('other')
+  })
+
+  it('applies only the latest requested spreadsheet metadata refresh', async () => {
+    const store = useDocumentsStore()
+    store.selectedDocument = { id: 'sheet', kind: 'spreadsheet', title: 'Current' } as any
+    let finishFirst!: (value: unknown) => void
+    let finishSecond!: (value: unknown) => void
+    documentsApiMocks.documentsGetDocument.mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishSecond = resolve }))
+    const first = store.refreshDocumentMetadata('sheet')
+    const second = store.refreshDocumentMetadata('sheet')
+    finishFirst({ id: 'sheet', kind: 'spreadsheet', title: 'Older restore' }); await first
+    expect(store.selectedDocument?.title).toBe('Current')
+    finishSecond({ id: 'sheet', kind: 'spreadsheet', title: 'Newest restore' }); await second
+    expect(store.selectedDocument?.title).toBe('Newest restore')
   })
 
   it('does not request admin users as a member and clears stale bots', async () => {

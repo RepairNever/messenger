@@ -266,7 +266,7 @@ func (s *Service) ForwardMessage(ctx context.Context, p ForwardMessageParams) (F
 	// attachment references are committed. This serializes forwarding with a
 	// concurrent source deletion (including DM history/channel cascades), so a
 	// forward cannot create a new row for an object that deletion has released.
-	sourceTx, err := s.pool.Begin(ctx)
+	sourceTx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return ForwardMessageResult{}, fmt.Errorf("chat.ForwardMessage begin source lock: %w", err)
 	}
@@ -360,7 +360,7 @@ func (s *Service) ForwardMessage(ctx context.Context, p ForwardMessageParams) (F
 		return ForwardMessageResult{}, fmt.Errorf("chat.ForwardMessage load attachments: %w", err)
 	}
 
-	result, err := s.SendMessage(ctx, SendMessageParams{
+	result, err := s.sendMessage(ctx, SendMessageParams{
 		ChannelID: p.DestinationConversationID,
 		SenderID:  p.ActorID,
 		// Forwarding is intentionally non-idempotent in v1: each user action creates a new destination message.
@@ -378,7 +378,7 @@ func (s *Service) ForwardMessage(ctx context.Context, p ForwardMessageParams) (F
 			ThreadTitle:       source.ThreadTitle.String,
 		},
 		SuppressMentions: true,
-	})
+	}, sourceTx)
 	if err != nil {
 		return ForwardMessageResult{}, err
 	}
@@ -477,6 +477,13 @@ func (s *Service) ListForwardTargets(ctx context.Context, requesterID uuid.UUID)
 // SendMessage persists a message and emits message_created (and optionally
 // thread_summary_updated) events. It manages its own pgx transaction.
 func (s *Service) SendMessage(ctx context.Context, p SendMessageParams) (SendMessageResult, error) {
+	return s.sendMessage(ctx, p, nil)
+}
+
+// Forwarding supplies its ordered transaction so the source lock and destination
+// write share one event-writer lock instead of waiting on a nested transaction.
+// A successful write commits the transaction, whether supplied or created here.
+func (s *Service) sendMessage(ctx context.Context, p SendMessageParams, tx pgx.Tx) (SendMessageResult, error) {
 	p.Body = strings.TrimSpace(p.Body)
 	contentMode := p.ContentMode
 	if contentMode == "" {
@@ -590,9 +597,11 @@ func (s *Service) SendMessage(ctx context.Context, p SendMessageParams) (SendMes
 
 	isReply := p.ThreadRootMessageID != uuid.Nil
 
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return SendMessageResult{}, fmt.Errorf("chat.SendMessage begin tx: %w", err)
+	if tx == nil {
+		tx, err = events.BeginTx(ctx, s.pool)
+		if err != nil {
+			return SendMessageResult{}, fmt.Errorf("chat.SendMessage begin tx: %w", err)
+		}
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
@@ -1179,7 +1188,7 @@ func (s *Service) EditMessage(ctx context.Context, p EditMessageParams) (EditMes
 		return EditMessageResult{}, fmt.Errorf("%w: too many entities (max %d)", ErrInvalidMessageEntity, MaxMessageEntities)
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return EditMessageResult{}, fmt.Errorf("chat.EditMessage begin tx: %w", err)
 	}
@@ -1318,7 +1327,7 @@ func (s *Service) EditMessage(ctx context.Context, p EditMessageParams) (EditMes
 // conversations retain author-only deletion and message_deleted events.
 // Thread replies update thread summaries; deleting a root cascades to replies.
 func (s *Service) DeleteMessage(ctx context.Context, p DeleteMessageParams) (DeleteMessageResult, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return DeleteMessageResult{}, fmt.Errorf("chat.DeleteMessage begin tx: %w", err)
 	}
@@ -1457,7 +1466,7 @@ func (s *Service) DeleteMessage(ctx context.Context, p DeleteMessageParams) (Del
 }
 
 func (s *Service) ClearDMConversationHistory(ctx context.Context, p ClearDMConversationHistoryParams) (ClearDMConversationHistoryResult, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return ClearDMConversationHistoryResult{}, fmt.Errorf("chat.ClearDMConversationHistory begin tx: %w", err)
 	}
@@ -1542,6 +1551,10 @@ func (s *Service) ClearDMConversationHistory(ctx context.Context, p ClearDMConve
 		ConversationId: p.ConversationID.String(),
 		Payload:        &packetspb.ServerEvent_DmHistoryCleared{DmHistoryCleared: clearedEvt},
 	}
+	directDeliveries, err := s.buildUnreadRecalcDeliveriesForChannelMembersTx(ctx, tx, p.ConversationID)
+	if err != nil {
+		return ClearDMConversationHistoryResult{}, fmt.Errorf("chat.ClearDMConversationHistory unread counters: %w", err)
+	}
 	if err := s.appendAndNotifyTx(ctx, tx, "dm_history_cleared", p.ConversationID.String(), clearedEvt, clearedServerEvt); err != nil {
 		return ClearDMConversationHistoryResult{}, fmt.Errorf("chat.ClearDMConversationHistory %w", err)
 	}
@@ -1555,6 +1568,7 @@ func (s *Service) ClearDMConversationHistory(ctx context.Context, p ClearDMConve
 	return ClearDMConversationHistoryResult{
 		ConversationID:       p.ConversationID,
 		DeletedMessagesCount: deletedMessagesCount,
+		DirectDeliveries:     directDeliveries,
 	}, nil
 }
 
@@ -1745,11 +1759,7 @@ func (s *Service) buildUnreadRecalcDeliveriesForChannelMembersTx(ctx context.Con
 
 	deliveries := make([]DirectDelivery, 0, len(memberIDs))
 	for _, userID := range memberIDs {
-		lastReadSeq, err := s.loadLastReadSeqTx(ctx, tx, channelID, userID)
-		if err != nil {
-			return nil, err
-		}
-		counter, err := s.buildUnreadCounterTx(ctx, tx, channelID, userID, lastReadSeq)
+		counter, err := s.buildUnreadCounterTx(ctx, tx, channelID, userID)
 		if err != nil {
 			return nil, err
 		}

@@ -75,6 +75,8 @@ export default defineConfig({
           '**/vendor-livekit-*.js',  // ~439KB, lazy-loaded on call join
           '**/vendor-emoji-*.js',    // ~885KB, lazy-loaded on first emoji click
           '**/vendor-emoji-*.css',   // emoji picker styles
+          '**/SpreadsheetEditor-*.js', // Univer loads only when opening a workbook
+          '**/SpreadsheetEditor-*.css',
         ],
       },
     }),

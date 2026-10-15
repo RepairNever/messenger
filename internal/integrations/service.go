@@ -78,6 +78,7 @@ type integrationTaskFieldResponseDTO struct {
 }
 
 type integrationDocumentResponseDTO struct {
+	Kind        string     `json:"kind"`
 	ID          uuid.UUID  `json:"id"`
 	ParentID    *uuid.UUID `json:"parent_id"`
 	Title       string     `json:"title"`
@@ -203,7 +204,8 @@ func (s *Service) CreateDocument(ctx context.Context, params CreateDocumentParam
 		ActorID:          params.ActorID,
 	})
 	if err != nil {
-		return integrationDocumentResponseDTO{}, err
+		return integrationDocumentResponseDTO{
+			Kind: row.Kind}, err
 	}
 	return mapIntegrationDocumentResponse(row), nil
 }
@@ -211,7 +213,8 @@ func (s *Service) CreateDocument(ctx context.Context, params CreateDocumentParam
 func (s *Service) GetDocument(ctx context.Context, documentID, actorID uuid.UUID) (integrationDocumentResponseDTO, error) {
 	row, err := s.documents.GetDocument(ctx, documentID, actorID)
 	if err != nil {
-		return integrationDocumentResponseDTO{}, err
+		return integrationDocumentResponseDTO{
+			Kind: row.Kind}, err
 	}
 	return mapIntegrationDocumentResponse(row), nil
 }
@@ -302,6 +305,7 @@ func mapIntegrationTaskResponse(
 
 func mapIntegrationDocumentResponse(row documents.DocumentResponse) integrationDocumentResponseDTO {
 	return integrationDocumentResponseDTO{
+		Kind:        row.Kind,
 		ID:          row.ID,
 		ParentID:    row.ParentDocumentID,
 		Title:       row.Title,

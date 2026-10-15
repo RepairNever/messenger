@@ -715,7 +715,7 @@ func (s *Server) startEventFanout(
 			cacheReady := state.cacheReady()
 			isCallParticipantEvent := evt.GetCallStateChanged() != nil || evt.GetCallRaisedHandsChanged() != nil
 			shouldFallback := !cacheReady || evt.GetConversationUpserted() != nil || isCallParticipantEvent
-			if result == "conversation_cache_miss" && shouldFallback && s.authorizeEvent != nil {
+			if ((result == "conversation_cache_miss" && shouldFallback) || result == "document_access_required") && s.authorizeEvent != nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 				allowed = s.authorizeEvent(ctx, principal, evt)
 				timeoutErr := ctx.Err()
@@ -3064,6 +3064,10 @@ func (s *Server) handleDomainPayload(
 		}
 		content, err := s.documentsSvc.GetDocumentContent(ctx, documentID, principal.UserID)
 		if err != nil {
+			if errors.Is(err, documents.ErrBadRequest) {
+				badReq("document_content_collab_subscribe_request: spreadsheet content requires the spreadsheet API")
+				return
+			}
 			if errors.Is(err, documents.ErrNotFound) || errors.Is(err, documents.ErrForbidden) {
 				forbidden("document not found")
 				return

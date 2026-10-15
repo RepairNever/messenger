@@ -669,6 +669,9 @@ func (h *Handler) clearConversationHistory(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if h.notifier != nil {
+		h.notifier.SendChatDirectServerEvents(result.DirectDeliveries)
+	}
 	httputil.WriteJSON(w, http.StatusOK, clearConversationHistoryResponse{
 		ConversationID:       result.ConversationID.String(),
 		DeletedMessagesCount: result.DeletedMessagesCount,

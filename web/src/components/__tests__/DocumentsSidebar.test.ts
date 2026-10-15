@@ -1,5 +1,5 @@
 import { nextTick, reactive } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import DocumentsSidebar from '@/components/documents/DocumentsSidebar.vue'
 
@@ -46,6 +46,38 @@ describe('DocumentsSidebar', () => {
     documentsStoreMock.favoriteDocuments = []
     storageMocks.collapsedTeamspaceIds = []
     storageMocks.collapsedNodeIds = []
+  })
+
+  it('creates a root spreadsheet without passing initial Markdown content', async () => {
+    documentsStoreMock.sidebarTeamspaces = [{ id: 'teamspace-1', name: 'Alpha', documents: [] }]
+    documentsStoreMock.createDocument.mockResolvedValueOnce({ id: 'sheet-1' })
+    const wrapper = mount(DocumentsSidebar, { props: { selectedTeamspaceId: null, selectedDocumentId: null, searchQuery: '' }, global: { stubs: { Teleport: true } } })
+    await wrapper.get('[data-testid="documents-teamspace-add-teamspace-1"]').trigger('click')
+    expect((wrapper.get('[data-testid="documents-create-kind"]').element as HTMLSelectElement).value).toBe('markdown')
+    await wrapper.get('[data-testid="documents-create-content"]').setValue('Should not become spreadsheet content')
+    await wrapper.get('[data-testid="documents-create-kind"]').setValue('spreadsheet')
+    expect(wrapper.find('[data-testid="documents-create-content"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="documents-create-title"]').setValue('Budget')
+    await wrapper.get('[data-testid="documents-create-submit"]').trigger('click')
+    await flushPromises()
+    expect(documentsStoreMock.createDocument).toHaveBeenCalledWith({ teamspace_id: 'teamspace-1', parent_document_id: null, title: 'Budget', kind: 'spreadsheet' })
+    expect(wrapper.emitted('openDocument')).toEqual([['sheet-1']])
+    wrapper.unmount()
+  })
+
+  it('opens spreadsheet creation from a nested document menu and renders its sheet icon', async () => {
+    documentsStoreMock.sidebarTeamspaces = [{ id: 'teamspace-1', name: 'Alpha', documents: [{ id: 'root', teamspace_id: 'teamspace-1', title: 'Root', children: [{ id: 'child', teamspace_id: 'teamspace-1', title: 'Budget', kind: 'spreadsheet', children: [] }] }] }]
+    documentsStoreMock.createDocument.mockResolvedValueOnce({ id: 'child-sheet' })
+    const wrapper = mount(DocumentsSidebar, { props: { selectedTeamspaceId: null, selectedDocumentId: null, searchQuery: '' }, global: { stubs: { Teleport: true } } })
+    expect(wrapper.get('[data-document-node-id="child"]').find('[data-document-kind="spreadsheet"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="documents-node-menu-child"]').trigger('click')
+    await wrapper.get('[data-testid="documents-node-menu-add-spreadsheet-child"]').trigger('click')
+    expect((wrapper.get('[data-testid="documents-create-kind"]').element as HTMLSelectElement).value).toBe('spreadsheet')
+    await wrapper.get('[data-testid="documents-create-title"]').setValue('Forecast')
+    await wrapper.get('[data-testid="documents-create-submit"]').trigger('click')
+    await flushPromises()
+    expect(documentsStoreMock.createDocument).toHaveBeenCalledWith({ teamspace_id: 'teamspace-1', parent_document_id: 'child', title: 'Forecast', kind: 'spreadsheet' })
+    wrapper.unmount()
   })
 
   it('tolerates null documents and null children in sidebar payloads', () => {

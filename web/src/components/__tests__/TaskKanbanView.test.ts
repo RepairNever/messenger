@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { defineComponent, reactive, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TaskKanbanView from '@/components/tasks/TaskKanbanView.vue'
@@ -209,5 +209,33 @@ describe('TaskKanbanView', () => {
 
     wrapper.unmount()
     expect(unsubscribeTaskStatusChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('pauses realtime refresh while a card is open and refreshes once on return', async () => {
+    vi.useFakeTimers()
+    const showKanban = ref(true)
+    const host = defineComponent({
+      components: { TaskKanbanView }, setup: () => ({ showKanban }),
+      template: '<KeepAlive><TaskKanbanView v-if="showKanban" :template-filter="null" /></KeepAlive>',
+    })
+    const wrapper = mount(host, { global: { stubs: { TaskTrackerFilters: { template: '<div />' } } } })
+    await flushPromises()
+    expect(tasksStoreMock.loadGroupedTaskList).not.toHaveBeenCalled()
+    taskStatusChangedHandler?.({ taskId: 'task-1', toStatusId: 'st-2' })
+
+    showKanban.value = false
+    await flushPromises()
+    tasksStoreMock.applyTaskStatusChangedToGrouped.mockClear()
+    taskStatusChangedHandler?.({ taskId: 'task-1', toStatusId: 'st-1' })
+    vi.advanceTimersByTime(350)
+    await flushPromises()
+    expect(tasksStoreMock.loadGroupedTaskList).not.toHaveBeenCalled()
+    expect(tasksStoreMock.applyTaskStatusChangedToGrouped).not.toHaveBeenCalled()
+
+    showKanban.value = true
+    await flushPromises()
+    expect(wrapper.text()).toContain('First task')
+    expect(tasksStoreMock.loadGroupedTaskList).toHaveBeenCalledExactlyOnceWith(undefined, 50)
+    wrapper.unmount()
   })
 })

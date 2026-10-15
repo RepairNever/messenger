@@ -3,6 +3,7 @@
     <TaskTrackerFilters
       :template-filter="templateFilter"
       :total="tasksStore.taskListTotal"
+      :active="active"
       @filters-change="onFiltersChange"
     />
 
@@ -76,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, ref } from 'vue'
 import type { TaskFilterPayload } from '@/services/http/tasksApi'
 import { useTasksStore } from '@/stores/tasks'
 import { useChatStore } from '@/stores/chat'
@@ -87,6 +88,29 @@ const emit = defineEmits<{ openTask: [publicId: string] }>()
 
 const tasksStore = useTasksStore()
 const chatStore = useChatStore()
+const active = ref(true)
+let hasActivated = false
+let filterChangeVersion = 0
+
+onActivated(() => {
+  const returning = hasActivated
+  hasActivated = true
+  active.value = true
+  if (!returning) return
+
+  const version = filterChangeVersion
+  void nextTick().then(() => {
+    if (!active.value || filterChangeVersion !== version) return
+    void tasksStore.loadGroupedTaskList(undefined, tasksStore.groupedTaskPortionLimit)
+  })
+})
+
+onDeactivated(() => {
+  active.value = false
+  if (groupedReloadTimer) clearTimeout(groupedReloadTimer)
+  groupedReloadTimer = null
+  clearDragState()
+})
 
 const baseFilters = ref<TaskFilterPayload>({})
 const draggingTaskId = ref('')
@@ -97,6 +121,7 @@ const movingTaskIds = new Set<string>()
 
 let groupedReloadTimer: ReturnType<typeof setTimeout> | null = null
 const unsubTaskStatusChanged = chatStore.onTaskStatusChanged((evt) => {
+  if (!active.value) return
   tasksStore.applyTaskStatusChangedToGrouped(evt.taskId, evt.toStatusId)
   scheduleGroupedReload()
 })
@@ -112,6 +137,8 @@ const orderedColumns = computed(() => {
 })
 
 function onFiltersChange(payload: TaskFilterPayload) {
+  if (!active.value) return
+  filterChangeVersion += 1
   baseFilters.value = payload
   tasksStore.setListParams({ ...payload, page: 1 }, 'grouped')
 }
@@ -171,9 +198,11 @@ async function onColumnDrop(toStatusId: string) {
 }
 
 function scheduleGroupedReload() {
+  if (!active.value) return
   if (groupedReloadTimer) clearTimeout(groupedReloadTimer)
   groupedReloadTimer = setTimeout(() => {
     groupedReloadTimer = null
+    if (!active.value) return
     // Intentionally reuse the store's remembered grouped params so realtime
     // refresh keeps the current filters, including the show-subtasks toggle.
     void tasksStore.loadGroupedTaskList(undefined, tasksStore.groupedTaskPortionLimit)

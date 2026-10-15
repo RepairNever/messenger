@@ -2,7 +2,7 @@
 
 This document describes how developers should use the static-token integration endpoints exposed by the backend.
 
-> For the richer bot-facing surface (messaging, task comments, channel discovery, and the long-polling event stream under `/api/bot/v1/*`), see [BOT_API.md](BOT_API.md). Token provisioning is shared between the two APIs.
+> For the richer bot-facing surface (messaging, task writes, public dictionary item creation, task comments, channel discovery, and the long-polling event stream under `/api/bot/v1/*`), see [BOT_API.md](BOT_API.md). Token provisioning is shared between the two APIs.
 
 ## Overview
 
@@ -12,6 +12,8 @@ Integration endpoints live under `/api/integrations/*` and are intended for `bot
 - Tokens are stored server-side as SHA-256 hashes in the `integration_token` table.
 - Bot users cannot use normal interactive auth flows (`/api/login`, refresh-token rotation, or WS auth).
 - Document access still goes through the normal document service permission checks.
+
+To add a value to an existing public enum dictionary, use `POST /api/bot/v1/dictionaries/{dictionary_id}/items` with the same static Bearer token and a JSON body such as `{"value":"New value"}`. Discover the dictionary ID and its `is_public` flag through `GET /api/bot/v1/tasks/config`. See [Create a public dictionary item](BOT_API.md#create-a-public-dictionary-item) for the request, response, validation, and retry behavior. This write route belongs to the Bot API and uses its rate limits; there is no dictionary-write route under `/api/integrations/*`.
 
 ## Provision A Bot User
 

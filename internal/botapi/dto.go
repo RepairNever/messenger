@@ -222,6 +222,7 @@ type createDocumentResponse struct {
 }
 
 type documentDTO struct {
+	Kind            string          `json:"kind"`
 	ID              uuid.UUID       `json:"id"`
 	TeamspaceID     uuid.UUID       `json:"teamspace_id"`
 	ParentID        *uuid.UUID      `json:"parent_id"`

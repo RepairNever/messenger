@@ -28,7 +28,7 @@ vi.mock('@/components/tasks/TaskKanbanView.vue', () => ({
 
 vi.mock('@/components/tasks/TaskListView.vue', () => ({
   default: {
-    template: '<section data-testid="task-list-view" />',
+    template: '<section data-testid="task-list-view"><input /></section>',
   },
 }))
 
@@ -82,5 +82,27 @@ describe('TaskTrackerShell', () => {
     })
 
     expect(wrapper.get('[data-testid="task-create-dialog"]').attributes('data-initial-template-id')).toBe('tpl-2')
+  })
+
+  it('keeps the list DOM and local state while a task card is open', async () => {
+    const wrapper = mount(TaskTrackerShell, {
+      props: {
+        modelValue: null,
+        sidebarCollapsed: true,
+        currentView: 'tasks-list',
+        viewMode: 'list',
+      },
+    })
+    const input = wrapper.get('[data-testid="task-list-view"] input')
+    await input.setValue('remembered list state')
+
+    await wrapper.setProps({ viewMode: 'card' })
+    expect(wrapper.find('[data-testid="task-list-view"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="task-card"]').exists()).toBe(true)
+
+    await wrapper.setProps({ viewMode: 'list' })
+    expect(wrapper.get('[data-testid="task-list-view"] input').element).toBe(input.element)
+    expect((input.element as HTMLInputElement).value).toBe('remembered list state')
+    wrapper.unmount()
   })
 })

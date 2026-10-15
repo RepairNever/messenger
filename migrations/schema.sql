@@ -522,6 +522,16 @@ CREATE TABLE IF NOT EXISTS thread_reads (
   PRIMARY KEY (root_message_id, user_id)
 );
 
+-- Transactional ordering of authoritative unread snapshots, independent of
+-- message/read cursors so delayed zero and positive counters cannot regress.
+CREATE TABLE IF NOT EXISTS conversation_unread_revisions (
+  channel_id UUID NOT NULL,
+  user_id    UUID NOT NULL,
+  revision   BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
+  PRIMARY KEY (channel_id, user_id),
+  FOREIGN KEY (channel_id, user_id) REFERENCES channel_members(channel_id, user_id) ON DELETE CASCADE
+);
+
 -- ---------------------------------------------------------------------------
 -- Notifications
 -- ---------------------------------------------------------------------------
@@ -729,7 +739,8 @@ CREATE TABLE IF NOT EXISTS workspace_events (
                 'dm_history_cleared',
                 'call_raised_hands_changed',
                 'secret_history_invalidated',
-                'task_comment_created'
+                'task_comment_created',
+                'spreadsheet_changed'
               )),
   channel_id  UUID        REFERENCES channels(id) ON DELETE SET NULL,
   payload     JSONB       NOT NULL,
@@ -1318,6 +1329,7 @@ CREATE TABLE IF NOT EXISTS document (
     teamspace_id       uuid         NOT NULL REFERENCES teamspace(id) ON DELETE CASCADE,
     parent_document_id uuid         NULL REFERENCES document(id) ON DELETE CASCADE,
     title              text         NOT NULL,
+    kind               text         NOT NULL DEFAULT 'markdown',
     content_markdown   text         NULL,
     created_by         uuid         NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     updated_by         uuid         NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
@@ -1326,6 +1338,8 @@ CREATE TABLE IF NOT EXISTS document (
     archived_at        timestamptz  NULL,
 
     CONSTRAINT pk_document PRIMARY KEY (id),
+    CONSTRAINT chk_document_kind CHECK (kind IN ('markdown', 'spreadsheet')),
+    CONSTRAINT chk_document_spreadsheet_markdown CHECK (kind <> 'spreadsheet' OR content_markdown IS NULL),
     CONSTRAINT chk_document_title_nonempty CHECK (btrim(title) <> '')
 );
 
@@ -1419,12 +1433,70 @@ CREATE TABLE IF NOT EXISTS document_history (
     document_id      uuid         NOT NULL REFERENCES document(id) ON DELETE CASCADE,
     title            text         NOT NULL,
     content_markdown text         NULL,
+    kind             text         NOT NULL DEFAULT 'markdown',
+    workbook_json    jsonb        NULL,
+    spreadsheet_revision bigint   NULL,
+    spreadsheet_structure_epoch bigint NULL,
     edited_by        uuid         NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     created_at       timestamptz  NOT NULL DEFAULT now(),
 
     CONSTRAINT pk_document_history PRIMARY KEY (id),
+    CONSTRAINT chk_document_history_kind CHECK (kind IN ('markdown', 'spreadsheet')),
+    CONSTRAINT chk_document_history_content CHECK (
+        (kind = 'markdown' AND workbook_json IS NULL AND spreadsheet_revision IS NULL AND spreadsheet_structure_epoch IS NULL)
+        OR (kind = 'spreadsheet' AND content_markdown IS NULL AND workbook_json IS NOT NULL AND jsonb_typeof(workbook_json) = 'object'
+            AND spreadsheet_revision IS NOT NULL AND spreadsheet_revision >= 0
+            AND spreadsheet_structure_epoch IS NOT NULL AND spreadsheet_structure_epoch >= 0)
+    ),
     CONSTRAINT chk_document_history_title_nonempty CHECK (btrim(title) <> '')
 );
 
 CREATE INDEX IF NOT EXISTS idx_document_history_document_id
     ON document_history (document_id, created_at DESC);
+
+-- Spreadsheet documents use browser-authored snapshots and server-owned versions.
+CREATE OR REPLACE FUNCTION prevent_document_kind_change() RETURNS trigger AS $$
+BEGIN
+    IF NEW.kind IS DISTINCT FROM OLD.kind THEN
+        RAISE EXCEPTION 'document kind is immutable' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_document_kind_immutable ON document;
+CREATE TRIGGER trg_document_kind_immutable BEFORE UPDATE OF kind ON document
+    FOR EACH ROW EXECUTE FUNCTION prevent_document_kind_change();
+
+CREATE TABLE IF NOT EXISTS document_spreadsheet (
+    document_id uuid PRIMARY KEY REFERENCES document(id) ON DELETE CASCADE,
+    workbook_json jsonb NOT NULL CHECK (jsonb_typeof(workbook_json) = 'object'),
+    revision bigint NOT NULL DEFAULT 0 CHECK (revision BETWEEN 0 AND 9007199254740991),
+    structure_epoch bigint NOT NULL DEFAULT 0 CHECK (structure_epoch BETWEEN 0 AND 9007199254740991),
+    epoch_start_revision bigint NOT NULL DEFAULT 0 CHECK (epoch_start_revision >= 0 AND epoch_start_revision <= revision),
+    last_event_seq bigint NOT NULL DEFAULT 0 CHECK (last_event_seq >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS document_spreadsheet_cell_version (
+    document_id uuid NOT NULL REFERENCES document_spreadsheet(document_id) ON DELETE CASCADE,
+    sheet_id text NOT NULL CHECK (length(sheet_id) BETWEEN 1 AND 128),
+    row_index integer NOT NULL CHECK (row_index >= 0),
+    column_index integer NOT NULL CHECK (column_index >= 0),
+    last_revision bigint NOT NULL CHECK (last_revision > 0),
+    PRIMARY KEY (document_id, sheet_id, row_index, column_index)
+);
+
+-- Permanent compact receipts deliberately have no FK to prunable events/history.
+CREATE TABLE IF NOT EXISTS document_spreadsheet_operation (
+    document_id uuid NOT NULL REFERENCES document_spreadsheet(document_id) ON DELETE CASCADE,
+    operation_id text NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 128),
+    actor_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    request_hash bytea NOT NULL CHECK (octet_length(request_hash) = 32),
+    outcome text NOT NULL CHECK (outcome IN ('accepted', 'conflict')),
+    revision bigint NOT NULL CHECK (revision >= 0),
+    structure_epoch bigint NOT NULL CHECK (structure_epoch >= 0),
+    event_seq bigint NOT NULL DEFAULT 0 CHECK (event_seq >= 0),
+    code text NOT NULL DEFAULT '',
+    message text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (document_id, operation_id)
+);

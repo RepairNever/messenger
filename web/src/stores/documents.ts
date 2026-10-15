@@ -20,6 +20,7 @@ import {
   type DocumentFavoriteResponse,
   type DocumentHistoryItem,
   type DocumentItem,
+  type DocumentKind,
   type DocumentSearchResult,
   type SidebarDocumentNode,
   type SidebarTeamspace,
@@ -38,6 +39,7 @@ export interface FavoriteSidebarDocument {
   id: string
   teamspace_id: string
   title: string
+  kind?: DocumentKind
   favorited_at: string
   ancestor_document_ids: string[]
 }
@@ -64,6 +66,7 @@ export const useDocumentsStore = defineStore('documents', () => {
   const botsError = ref<string | null>(null)
 
   const selectedDocumentRequestKey = ref('')
+  let metadataRefreshGeneration = 0
   const searchQuery = ref('')
   const searchResults = ref<DocumentSearchResult[]>([])
   const searchLoading = ref(false)
@@ -177,6 +180,22 @@ export const useDocumentsStore = defineStore('documents', () => {
     documentError.value = null
   }
 
+  // Refresh metadata without unmounting the live spreadsheet editor. A route
+  // change or a newer metadata response must not be replaced by this GET.
+  async function refreshDocumentMetadata(id: string) {
+    if (selectedDocument.value?.id !== id) return
+    const selected = selectedDocument.value
+    const requestKey = selectedDocumentRequestKey.value
+    const generation = ++metadataRefreshGeneration
+    const row = await documentsGetDocument(id)
+    if (generation !== metadataRefreshGeneration || selectedDocument.value !== selected || selectedDocumentRequestKey.value !== requestKey) return
+    selectedDocument.value = row
+    sidebarTeamspaces.value = sidebarTeamspaces.value.map(teamspace => {
+      const documents = updateDocumentTitleInTree(teamspace.documents, id, row.title)
+      return documents === teamspace.documents ? teamspace : { ...teamspace, documents: Array.isArray(documents) ? documents : [] }
+    })
+  }
+
   function setSearchQuery(query: string) {
     searchQuery.value = query
   }
@@ -276,6 +295,7 @@ export const useDocumentsStore = defineStore('documents', () => {
           id: node.id,
           teamspace_id: node.teamspace_id,
           title: node.title,
+          kind: node.kind ?? 'markdown',
           favorited_at: node.favorited_at,
           ancestor_document_ids: ancestors,
         },
@@ -345,6 +365,7 @@ export const useDocumentsStore = defineStore('documents', () => {
       teamspace_id: documentItem.teamspace_id,
       parent_document_id: documentItem.parent_document_id,
       title: documentItem.title,
+      kind: documentItem.kind ?? 'markdown',
       is_favorite: false,
       favorited_at: null,
       children: [],
@@ -416,6 +437,10 @@ export const useDocumentsStore = defineStore('documents', () => {
 
   async function createDocument(payload: CreateDocumentPayload) {
     const row = await documentsCreateDocument(payload)
+    selectedDocumentRequestKey.value = ''
+    selectedDocumentContentRequestKey.value = ''
+    documentLoading.value = false
+    documentError.value = null
     selectedDocument.value = row
     addDocumentToSidebar(row)
     return row
@@ -504,6 +529,7 @@ export const useDocumentsStore = defineStore('documents', () => {
     loadBots,
     selectDocument,
     clearSelectedDocument,
+    refreshDocumentMetadata,
     setSearchQuery,
     clearSearch,
     loadSearchResults,

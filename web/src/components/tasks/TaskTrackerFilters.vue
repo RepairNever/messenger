@@ -239,11 +239,12 @@ import {
   type UserCustomStatus,
 } from '@/types/userStatus'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   templateFilter: string | null
   total: number
   showCreatedDateFilter?: boolean
-}>()
+  active?: boolean
+}>(), { active: true })
 
 const emit = defineEmits<{
   filtersChange: [payload: TaskFilterPayload]
@@ -360,14 +361,23 @@ function buildFilterPayload(): TaskFilterPayload {
   }
 }
 
+let pendingFilters = false
 function emitFilters() {
+  if (!props.active) {
+    pendingFilters = true
+    return
+  }
+  pendingFilters = false
   emit('filtersChange', buildFilterPayload())
 }
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 function onSearchInput() {
   if (searchTimer) clearTimeout(searchTimer)
-  searchTimer = setTimeout(emitFilters, 300)
+  searchTimer = setTimeout(() => {
+    searchTimer = null
+    emitFilters()
+  }, 300)
 }
 
 function selectTemplate(id: string | null) {
@@ -454,6 +464,15 @@ watch(selectedStatusIds, () => emitFilters(), { deep: true })
 watch(selectedAssigneeIds, () => emitFilters(), { deep: true })
 watch(showSubtasks, () => emitFilters())
 watch(() => props.showCreatedDateFilter, () => emitFilters())
+watch(() => props.active, (active) => {
+  if (active) {
+    if (pendingFilters) emitFilters()
+  } else if (searchTimer) {
+    clearTimeout(searchTimer)
+    searchTimer = null
+    pendingFilters = true
+  }
+})
 
 watch(() => props.templateFilter, (val) => {
   selectedTemplateId.value = val

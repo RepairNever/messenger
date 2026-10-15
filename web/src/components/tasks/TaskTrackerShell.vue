@@ -21,16 +21,19 @@
         :template-filter="modelValue"
         @back="emit('back')"
       />
-      <TaskKanbanView
-        v-else-if="viewMode === 'kanban'"
-        :template-filter="modelValue"
-        @open-task="emit('openTask', $event)"
-      />
-      <TaskListView
-        v-else
-        :template-filter="modelValue"
-        @open-task="emit('openTask', $event)"
-      />
+      <!-- Keep the current list across cards; list and kanban share store state. -->
+      <KeepAlive :max="1">
+        <TaskKanbanView
+          v-if="viewMode === 'kanban'"
+          :template-filter="modelValue"
+          @open-task="emit('openTask', $event)"
+        />
+        <TaskListView
+          v-else-if="viewMode === 'list'"
+          :template-filter="modelValue"
+          @open-task="emit('openTask', $event)"
+        />
+      </KeepAlive>
     </main>
     <TaskCreateDialog :initial-template-id="modelValue" />
   </div>

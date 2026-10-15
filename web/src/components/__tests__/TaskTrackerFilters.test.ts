@@ -179,6 +179,45 @@ describe('TaskTrackerFilters', () => {
     expect(latest.prefixes).toEqual(['BUG'])
   })
 
+  it('defers inactive filter changes and emits the latest payload once on return', async () => {
+    const wrapper = mount(TaskTrackerFilters, {
+      props: { templateFilter: null, total: 1, active: false },
+      global: { stubs: { UserAvatar: { template: '<div />' } } },
+    })
+    await flushPromises()
+    filtersMock.selectedStatusIds.value = ['st-1']
+    filtersMock.showSubtasks.value = true
+    await wrapper.setProps({ templateFilter: 'tpl-1' })
+    expect(wrapper.emitted('filtersChange')).toBeUndefined()
+
+    await wrapper.setProps({ active: true })
+    expect(wrapper.emitted('filtersChange')).toHaveLength(1)
+    expect(wrapper.emitted('filtersChange')![0][0]).toMatchObject({
+      status_ids: ['st-1'], prefixes: ['BUG'], include_subtasks: true,
+    })
+    wrapper.unmount()
+  })
+
+  it('defers a pending search while inactive and emits it once on return', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(TaskTrackerFilters, {
+      props: { templateFilter: null, total: 1 },
+      global: { stubs: { UserAvatar: { template: '<div />' } } },
+    })
+    await flushPromises()
+    const initialEmissions = wrapper.emitted('filtersChange')!.length
+    await wrapper.get('input[placeholder="Search by ID, title, description…"]').setValue('  pending search  ')
+    await wrapper.setProps({ active: false })
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+    expect(wrapper.emitted('filtersChange')).toHaveLength(initialEmissions)
+
+    await wrapper.setProps({ active: true })
+    expect(wrapper.emitted('filtersChange')).toHaveLength(initialEmissions + 1)
+    expect(wrapper.emitted('filtersChange')![initialEmissions][0]).toMatchObject({ search: 'pending search' })
+    wrapper.unmount()
+  })
+
   it('uses a taller shared dropdown and single-scroll assignee layout', async () => {
     const wrapper = mount(TaskTrackerFilters, {
       props: {

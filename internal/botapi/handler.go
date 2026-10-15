@@ -57,6 +57,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/bot/v1/tasks/config", h.requireAuth(h.tasksConfig))
 	mux.HandleFunc("/api/bot/v1/tasks", h.requireAuth(h.tasksCollection))
 	mux.HandleFunc("/api/bot/v1/tasks/", h.requireAuth(h.tasksRouter))
+	mux.HandleFunc("/api/bot/v1/dictionaries/", h.requireAuth(h.dictionaryItems))
 	mux.HandleFunc("/api/bot/v1/users", h.requireAuth(h.usersLookup))
 	mux.HandleFunc("/api/bot/v1/search/messages", h.requireAuth(h.searchMessages))
 	mux.HandleFunc("/api/bot/v1/search/documents", h.requireAuth(h.searchDocuments))
@@ -632,8 +633,7 @@ func (h *Handler) taskCommentCreate(w http.ResponseWriter, r *http.Request, p au
 	httputil.WriteJSON(w, http.StatusCreated, dto)
 }
 
-// taskServiceError maps tasks service errors the same way the integrations
-// handler does (404 body reads "not found: task").
+// taskServiceError maps task and dictionary service errors to HTTP responses.
 func (h *Handler) taskServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, tasks.ErrNotFound):
@@ -642,6 +642,8 @@ func (h *Handler) taskServiceError(w http.ResponseWriter, err error) {
 		httputil.WriteJSON(w, http.StatusForbidden, httputil.ErrorBody(err.Error()))
 	case errors.Is(err, tasks.ErrBadRequest):
 		httputil.WriteJSON(w, http.StatusBadRequest, httputil.ErrorBody(err.Error()))
+	case errors.Is(err, tasks.ErrConflict):
+		httputil.WriteJSON(w, http.StatusConflict, httputil.ErrorBody(err.Error()))
 	default:
 		h.log.Error("botapi: task service", zap.Error(err))
 		httputil.WriteJSON(w, http.StatusInternalServerError, httputil.ErrorBody("internal error"))
@@ -761,6 +763,7 @@ func (h *Handler) documentItem(w http.ResponseWriter, r *http.Request, p auth.Pr
 		})
 	}
 	httputil.WriteJSON(w, http.StatusOK, documentDTO{
+		Kind:            doc.Kind,
 		ID:              doc.ID,
 		TeamspaceID:     doc.TeamspaceID,
 		ParentID:        doc.ParentDocumentID,

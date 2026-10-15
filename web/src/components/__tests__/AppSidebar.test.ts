@@ -1308,11 +1308,38 @@ describe('AppSidebar direct message ordering', () => {
       buildDm('dm-morgan', 'Morgan', { lastActivityAt: '2026-01-03T10:00:00.000Z' }),
       buildDm('dm-taylor', 'Taylor', { lastActivityAt: '2026-01-02T10:00:00.000Z', lastMessageSeq: 5n, unread: 5 }),
     ])
+    const ws = useWsStore()
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce({
+      messages: [{
+        id: 'taylor-latest', conversation_id: 'dm-taylor', sender_id: 'user-dm-taylor', sender_name: 'Taylor',
+        body: 'latest unread message', channel_seq: '5', thread_seq: '0', thread_root_message_id: '',
+        mention_everyone: false, created_at: '2026-01-02T10:00:00.000Z',
+      }],
+      has_more: false, page_size: 50,
+    })
+    chatStore.handleServerEvent(create(ServerEventSchema, {
+      payload: { case: 'readCounterUpdated', value: create(ReadCounterUpdatedEventSchema, {
+        counter: create(UnreadCounterSchema, { conversationId: 'dm-taylor', unreadMessages: 5, revision: 1n, lastMessageSeq: 5n, lastRootMessageSeq: 5n }),
+      }) },
+    }))
     expect(renderedDmOrder(wrapper)).toEqual(['dm-morgan', 'dm-taylor', 'dm-alex'])
 
     const taylor = wrapper.findAllComponents(SidebarItem).find(item => item.text().includes('Taylor'))!
     expect(taylor.find('.text-sidebar-unreadBadge').text()).toBe('5')
     await taylor.find('button').trigger('click')
+    await chatStore.ensureConversationHistory('dm-taylor')
+    await flushAll()
+
+    expect(renderedDmOrder(wrapper)).toEqual(['dm-morgan', 'dm-taylor', 'dm-alex'])
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-taylor', 5n)
+    expect(chatStore.directMessages.find(dm => dm.id === 'dm-taylor')!.unread).toBe(5)
+    expect(taylor.find('.text-sidebar-unreadBadge').text()).toBe('5')
+    chatStore.handleServerEvent(create(ServerEventSchema, {
+      payload: { case: 'readCounterUpdated', value: create(ReadCounterUpdatedEventSchema, {
+        counter: create(UnreadCounterSchema, { conversationId: 'dm-taylor', unreadMessages: 0, revision: 2n, lastReadSeq: 5n, lastMessageSeq: 5n, lastRootMessageSeq: 5n }),
+      }) },
+    }))
     await flushAll()
 
     expect(renderedDmOrder(wrapper)).toEqual(['dm-morgan', 'dm-taylor', 'dm-alex'])
@@ -1364,7 +1391,17 @@ describe('AppSidebar direct message ordering', () => {
       buildDm('dm-morgan', 'Morgan', { lastActivityAt: '2026-01-02T00:00:00.000Z', lastMessageSeq: 2n }),
       buildDm('dm-taylor', 'Taylor', { lastActivityAt: '2026-01-01T00:00:00.000Z', lastMessageSeq: 1n }),
     ])
-    useWsStore().state = 'LIVE_SYNCED'
+    const ws = useWsStore()
+    ws.state = 'LIVE_SYNCED'
+    ws.sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce({
+      messages: [{
+        id: 'taylor-message', conversation_id: 'dm-taylor', sender_id: 'user-dm-taylor', sender_name: 'Taylor',
+        body: 'hello', channel_seq: '2', thread_seq: '0', thread_root_message_id: '',
+        mention_everyone: false, created_at: '2026-01-04T00:00:00.250Z',
+      }],
+      has_more: false, page_size: 50,
+    })
     expect(renderedDmOrder(wrapper)).toEqual(['dm-alex', 'dm-morgan', 'dm-taylor'])
     chatStore.handleServerEvent(create(ServerEventSchema, {
       eventSeq: 1n, eventId: 'incoming-taylor', conversationId: 'dm-taylor',
@@ -1375,7 +1412,7 @@ describe('AppSidebar direct message ordering', () => {
     }))
     chatStore.handleServerEvent(create(ServerEventSchema, {
       payload: { case: 'readCounterUpdated', value: create(ReadCounterUpdatedEventSchema, {
-        counter: create(UnreadCounterSchema, { conversationId: 'dm-taylor', unreadMessages: 1 }),
+        counter: create(UnreadCounterSchema, { conversationId: 'dm-taylor', unreadMessages: 1, revision: 1n, lastMessageSeq: 2n, lastRootMessageSeq: 2n }),
       }) },
     }))
     await flushAll()
@@ -1383,6 +1420,16 @@ describe('AppSidebar direct message ordering', () => {
     const taylor = wrapper.findAllComponents(SidebarItem).find(item => item.text().includes('Taylor'))!
     expect(taylor.find('.text-sidebar-unreadBadge').text()).toBe('1')
     await taylor.find('button').trigger('click')
+    await chatStore.ensureConversationHistory('dm-taylor')
+    await flushAll()
+    expect(renderedDmOrder(wrapper)).toEqual(['dm-taylor', 'dm-alex', 'dm-morgan'])
+    expect(ws.sendUpdateReadCursor).toHaveBeenCalledExactlyOnceWith('dm-taylor', 2n)
+    expect(taylor.find('.text-sidebar-unreadBadge').text()).toBe('1')
+    chatStore.handleServerEvent(create(ServerEventSchema, {
+      payload: { case: 'readCounterUpdated', value: create(ReadCounterUpdatedEventSchema, {
+        counter: create(UnreadCounterSchema, { conversationId: 'dm-taylor', unreadMessages: 0, revision: 2n, lastReadSeq: 2n, lastMessageSeq: 2n, lastRootMessageSeq: 2n }),
+      }) },
+    }))
     await flushAll()
     expect(renderedDmOrder(wrapper)).toEqual(['dm-taylor', 'dm-alex', 'dm-morgan'])
     expect(taylor.find('.text-sidebar-unreadBadge').exists()).toBe(false)

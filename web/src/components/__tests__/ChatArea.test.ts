@@ -1848,7 +1848,38 @@ describe('ChatArea', () => {
     expect(wrapper.text()).toContain('March 7')
   })
 
-  it('renders the unread divider at the derived boundary and drops it once read', async () => {
+  it('places the unread divider at the read cursor despite own messages and reply sequence gaps', async () => {
+    const chatStore = useChatStore()
+    chatStore.directMessages = [{
+      id: 'channel-1',
+      userId: 'user-2',
+      displayName: 'Bob',
+      presence: 'offline',
+      unread: 1,
+      lastReadSeq: 4n,
+      lastMessageSeq: 8n,
+      notificationLevel: NotificationLevel.ALL,
+    }]
+    chatStore.activeChannelId = 'channel-1'
+    chatStore.messages = {
+      'channel-1': [
+        buildMessage({ id: 'm-read', channelSeq: 4n }),
+        buildMessage({ id: 'm-unread', channelSeq: 5n, senderId: 'user-2' }),
+        buildMessage({ id: 'm-own', channelSeq: 8n, senderId: 'user-1' }),
+      ],
+    }
+
+    const wrapper = mount(ChatArea, {
+      global: { stubs: { MessageBubble: true, MessageInput: true } },
+    })
+    await flushAll()
+
+    expect(wrapper.findAll('[data-testid="unread-divider"]')).toHaveLength(1)
+    expect(wrapper.get('[data-message-id="m-unread"]').find('[data-testid="unread-divider"]').exists()).toBe(true)
+    expect(wrapper.get('[data-message-id="m-own"]').find('[data-testid="unread-divider"]').exists()).toBe(false)
+  })
+
+  it('renders the unread divider at the legacy count boundary and drops it once read', async () => {
     const chatStore = useChatStore()
     chatStore.channels = [{
       id: 'channel-1',

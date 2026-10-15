@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	"msgnr/internal/events"
 	"msgnr/internal/userstatus"
 )
 
@@ -48,6 +49,7 @@ type Service struct {
 	pool         *pgxpool.Pool
 	store        Storage
 	historyLimit int
+	eventStore   *events.Store
 }
 
 // Storage is the interface the document service uses for file object storage.
@@ -67,6 +69,7 @@ func NewService(pool *pgxpool.Pool, store Storage) *Service {
 		pool:         pool,
 		store:        store,
 		historyLimit: defaultDocumentHistoryLimit,
+		eventStore:   events.NewStore(pool),
 	}
 }
 
@@ -99,6 +102,7 @@ type TeamspaceRow struct {
 }
 
 type SidebarDocumentNode struct {
+	Kind             string                `json:"kind"`
 	ID               uuid.UUID             `json:"id"`
 	TeamspaceID      uuid.UUID             `json:"teamspace_id"`
 	ParentDocumentID *uuid.UUID            `json:"parent_document_id,omitempty"`
@@ -120,6 +124,7 @@ type sidebarTempNode struct {
 }
 
 type DocumentResponse struct {
+	Kind             string     `json:"kind"`
 	ID               uuid.UUID  `json:"id"`
 	TeamspaceID      uuid.UUID  `json:"teamspace_id"`
 	TeamspaceName    string     `json:"teamspace_name"`
@@ -134,6 +139,7 @@ type DocumentResponse struct {
 }
 
 type DocumentSearchResult struct {
+	Kind          string    `json:"kind"`
 	ID            uuid.UUID `json:"id"`
 	TeamspaceID   uuid.UUID `json:"teamspace_id"`
 	TeamspaceName string    `json:"teamspace_name"`
@@ -155,11 +161,15 @@ type DocumentHistoryEditor struct {
 }
 
 type DocumentHistoryItem struct {
-	Title           string                `json:"title"`
-	ContentMarkdown *string               `json:"content_markdown"`
-	EditedBy        uuid.UUID             `json:"edited_by"`
-	CreatedAt       time.Time             `json:"created_at"`
-	Editor          DocumentHistoryEditor `json:"editor"`
+	ID                        uuid.UUID             `json:"id"`
+	Kind                      string                `json:"kind"`
+	SpreadsheetRevision       *int64                `json:"spreadsheet_revision,omitempty"`
+	SpreadsheetStructureEpoch *int64                `json:"spreadsheet_structure_epoch,omitempty"`
+	Title                     string                `json:"title"`
+	ContentMarkdown           *string               `json:"content_markdown"`
+	EditedBy                  uuid.UUID             `json:"edited_by"`
+	CreatedAt                 time.Time             `json:"created_at"`
+	Editor                    DocumentHistoryEditor `json:"editor"`
 }
 
 type DocumentAttachmentRow struct {
@@ -189,6 +199,7 @@ type UpdateTeamspaceParams struct {
 }
 
 type CreateDocumentParams struct {
+	Kind             string
 	TeamspaceID      uuid.UUID
 	ParentDocumentID *uuid.UUID
 	Title            string
@@ -197,9 +208,10 @@ type CreateDocumentParams struct {
 }
 
 type UpdateDocumentParams struct {
-	Title           *string
-	ContentMarkdown *string
-	ActorID         uuid.UUID
+	Title                   *string
+	ContentMarkdown         *string
+	ContentMarkdownProvided bool
+	ActorID                 uuid.UUID
 }
 
 type UpdateDocumentContentParams struct {
@@ -490,7 +502,7 @@ func (s *Service) ListSidebar(ctx context.Context, userID uuid.UUID) ([]SidebarT
 	}
 
 	docRows, err := s.pool.Query(ctx,
-		`SELECT d.id, d.teamspace_id, d.parent_document_id, d.title, df.favorited_at
+		`SELECT d.id, d.teamspace_id, d.parent_document_id, d.title, d.kind, df.favorited_at
 		   FROM document d
 		   JOIN teamspace t
 		     ON t.id = d.teamspace_id
@@ -522,9 +534,10 @@ func (s *Service) ListSidebar(ctx context.Context, userID uuid.UUID) ([]SidebarT
 			teamspaceID      uuid.UUID
 			parentDocumentID uuid.NullUUID
 			title            string
+			kind             string
 			favoritedAt      sql.NullTime
 		)
-		if err := docRows.Scan(&id, &teamspaceID, &parentDocumentID, &title, &favoritedAt); err != nil {
+		if err := docRows.Scan(&id, &teamspaceID, &parentDocumentID, &title, &kind, &favoritedAt); err != nil {
 			return nil, fmt.Errorf("documents: scan sidebar document: %w", err)
 		}
 		item := &sidebarTempNode{
@@ -532,6 +545,7 @@ func (s *Service) ListSidebar(ctx context.Context, userID uuid.UUID) ([]SidebarT
 				ID:          id,
 				TeamspaceID: teamspaceID,
 				Title:       title,
+				Kind:        kind,
 			},
 		}
 		if parentDocumentID.Valid {
@@ -576,7 +590,20 @@ func (s *Service) ListSidebar(ctx context.Context, userID uuid.UUID) ([]SidebarT
 }
 
 func (s *Service) CreateDocument(ctx context.Context, params CreateDocumentParams) (DocumentResponse, error) {
+	kind := params.Kind
+	if kind == "" {
+		kind = DocumentKindMarkdown
+	}
+	if kind != DocumentKindMarkdown && kind != DocumentKindSpreadsheet {
+		return DocumentResponse{}, fmt.Errorf("%w: unsupported document kind", ErrBadRequest)
+	}
+	if kind == DocumentKindSpreadsheet && params.ContentMarkdown != nil {
+		return DocumentResponse{}, fmt.Errorf("%w: spreadsheet documents cannot contain Markdown", ErrBadRequest)
+	}
 	title := strings.TrimSpace(params.Title)
+	if kind == DocumentKindSpreadsheet && (len(title) > 256 || strings.ContainsRune(title, 0)) {
+		return DocumentResponse{}, fmt.Errorf("%w: spreadsheet title exceeds supported limits", ErrBadRequest)
+	}
 	if title == "" {
 		return DocumentResponse{}, fmt.Errorf("%w: document title is required", ErrBadRequest)
 	}
@@ -615,14 +642,19 @@ func (s *Service) CreateDocument(ctx context.Context, params CreateDocumentParam
 
 	var documentID uuid.UUID
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO document (teamspace_id, parent_document_id, title, content_markdown, created_by, updated_by)
-		 VALUES ($1, $2, $3, $4, $5, $5)
+		`INSERT INTO document (teamspace_id, parent_document_id, title, content_markdown, created_by, updated_by, kind)
+		 VALUES ($1, $2, $3, $4, $5, $5, $6)
 		 RETURNING id`,
-		params.TeamspaceID, params.ParentDocumentID, title, nullString(params.ContentMarkdown), params.ActorID,
+		params.TeamspaceID, params.ParentDocumentID, title, nullString(params.ContentMarkdown), params.ActorID, kind,
 	).Scan(&documentID); err != nil {
 		return DocumentResponse{}, classifyMutationError("create document", err)
 	}
 
+	if kind == DocumentKindSpreadsheet {
+		if err := s.createSpreadsheetInTx(ctx, tx, documentID, title); err != nil {
+			return DocumentResponse{}, err
+		}
+	}
 	if err := s.maybeCreateDocumentSnapshotInTx(ctx, tx, documentID, title, params.ContentMarkdown, params.ActorID); err != nil {
 		return DocumentResponse{}, err
 	}
@@ -642,6 +674,7 @@ func (s *Service) GetDocument(ctx context.Context, documentID, userID uuid.UUID)
 		        d.parent_document_id,
 		        parent.title,
 		        d.title,
+		        d.kind,
 		        d.content_markdown,
 		        d.created_by,
 		        d.updated_by,
@@ -674,6 +707,7 @@ func (s *Service) GetDocument(ctx context.Context, documentID, userID uuid.UUID)
 		&parentDocumentID,
 		&parentTitle,
 		&resp.Title,
+		&resp.Kind,
 		&content,
 		&resp.CreatedBy,
 		&resp.UpdatedBy,
@@ -702,7 +736,7 @@ func (s *Service) GetDocument(ctx context.Context, documentID, userID uuid.UUID)
 
 func (s *Service) GetDocumentContent(ctx context.Context, documentID, userID uuid.UUID) (*string, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT d.content_markdown
+		`SELECT d.content_markdown, d.kind
 		   FROM document d
 		   JOIN teamspace t
 		     ON t.id = d.teamspace_id
@@ -716,11 +750,15 @@ func (s *Service) GetDocumentContent(ctx context.Context, documentID, userID uui
 	)
 
 	var content sql.NullString
-	if err := row.Scan(&content); err != nil {
+	var kind string
+	if err := row.Scan(&content, &kind); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, s.documentAccessError(ctx, documentID, userID)
 		}
 		return nil, fmt.Errorf("documents: get document content: %w", err)
+	}
+	if kind != DocumentKindMarkdown {
+		return nil, fmt.Errorf("%w: spreadsheet content requires the spreadsheet API", ErrBadRequest)
 	}
 	if !content.Valid {
 		return nil, nil
@@ -741,6 +779,7 @@ func (s *Service) SearchDocuments(ctx context.Context, userID uuid.UUID, query s
 		        d.teamspace_id,
 		        t.name,
 		        d.title,
+		        d.kind,
 		        d.content_markdown
 		   FROM document d
 		   JOIN teamspace t
@@ -750,7 +789,7 @@ func (s *Service) SearchDocuments(ctx context.Context, userID uuid.UUID, query s
 		     ON tm.teamspace_id = d.teamspace_id
 		    AND tm.user_id = $1
 		  WHERE d.archived_at IS NULL
-		    AND (d.title ILIKE $2 OR d.content_markdown ILIKE $2)
+		    AND (d.title ILIKE $2 OR (d.kind = 'markdown' AND d.content_markdown ILIKE $2))
 		  ORDER BY CASE WHEN d.title ILIKE $2 THEN 0 ELSE 1 END,
 		           d.updated_at DESC
 		  LIMIT $3`,
@@ -772,6 +811,7 @@ func (s *Service) SearchDocuments(ctx context.Context, userID uuid.UUID, query s
 			&item.TeamspaceID,
 			&item.TeamspaceName,
 			&item.Title,
+			&item.Kind,
 			&content,
 		); err != nil {
 			return nil, fmt.Errorf("documents: scan searched document: %w", err)
@@ -786,135 +826,77 @@ func (s *Service) SearchDocuments(ctx context.Context, userID uuid.UUID, query s
 }
 
 func (s *Service) UpdateDocument(ctx context.Context, documentID uuid.UUID, params UpdateDocumentParams) (DocumentResponse, error) {
-	if params.Title == nil && params.ContentMarkdown == nil {
+	if params.Title == nil && params.ContentMarkdown == nil && !params.ContentMarkdownProvided {
 		return DocumentResponse{}, fmt.Errorf("%w: no document fields provided", ErrBadRequest)
 	}
-
-	var (
-		currentTitle   string
-		currentContent sql.NullString
-	)
-	if err := s.pool.QueryRow(ctx,
-		`SELECT d.title, d.content_markdown
-		   FROM document d
-		   JOIN teamspace t
-		     ON t.id = d.teamspace_id
-		    AND t.deleted_at IS NULL
-		   JOIN teamspace_member tm
-		     ON tm.teamspace_id = d.teamspace_id
-		    AND tm.user_id = $2
-		  WHERE d.id = $1
-		    AND d.archived_at IS NULL`,
-		documentID, params.ActorID,
-	).Scan(&currentTitle, &currentContent); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return DocumentResponse{}, s.documentAccessError(ctx, documentID, params.ActorID)
-		}
-		return DocumentResponse{}, fmt.Errorf("documents: load document for update: %w", err)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return DocumentResponse{}, err
 	}
-
-	nextTitle := currentTitle
+	defer tx.Rollback(ctx)
+	doc, err := s.lockDocumentInTx(ctx, tx, documentID, params.ActorID)
+	if err != nil {
+		return DocumentResponse{}, err
+	}
+	if doc.Kind == DocumentKindSpreadsheet && (params.ContentMarkdown != nil || params.ContentMarkdownProvided) {
+		return DocumentResponse{}, fmt.Errorf("%w: spreadsheet content requires the spreadsheet API", ErrBadRequest)
+	}
+	title := doc.Title
 	if params.Title != nil {
-		nextTitle = strings.TrimSpace(*params.Title)
-		if nextTitle == "" {
+		title = strings.TrimSpace(*params.Title)
+		if doc.Kind == DocumentKindSpreadsheet && (len(title) > 256 || strings.ContainsRune(title, 0)) {
+			return DocumentResponse{}, fmt.Errorf("%w: spreadsheet title exceeds supported limits", ErrBadRequest)
+		}
+		if title == "" {
 			return DocumentResponse{}, fmt.Errorf("%w: document title is required", ErrBadRequest)
 		}
 	}
-
-	var nextContent *string
-	if currentContent.Valid {
-		current := currentContent.String
-		nextContent = &current
+	var content *string
+	if doc.Content.Valid {
+		value := doc.Content.String
+		content = &value
 	}
-	if params.ContentMarkdown != nil {
-		nextContent = params.ContentMarkdown
+	if params.ContentMarkdown != nil || params.ContentMarkdownProvided {
+		content = params.ContentMarkdown
 	}
-
-	if nextTitle == currentTitle && nullStringEqual(nextContent, currentContent) {
-		return s.GetDocument(ctx, documentID, params.ActorID)
+	if title != doc.Title || !nullStringEqual(content, doc.Content) {
+		if _, err = tx.Exec(ctx, `UPDATE document SET title=$2,content_markdown=$3,updated_by=$4 WHERE id=$1`, documentID, title, nullString(content), params.ActorID); err != nil {
+			return DocumentResponse{}, classifyMutationError("update document", err)
+		}
+		if err = s.maybeCreateDocumentSnapshotInTx(ctx, tx, documentID, title, content, params.ActorID); err != nil {
+			return DocumentResponse{}, err
+		}
 	}
-
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return DocumentResponse{}, fmt.Errorf("documents: begin update document tx: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx,
-		`UPDATE document
-		    SET title = $2,
-		        content_markdown = $3,
-		        updated_by = $4
-		  WHERE id = $1`,
-		documentID, nextTitle, nullString(nextContent), params.ActorID,
-	); err != nil {
-		return DocumentResponse{}, classifyMutationError("update document", err)
-	}
-
-	if err := s.maybeCreateDocumentSnapshotInTx(ctx, tx, documentID, nextTitle, nextContent, params.ActorID); err != nil {
+	if err = tx.Commit(ctx); err != nil {
 		return DocumentResponse{}, err
 	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return DocumentResponse{}, fmt.Errorf("documents: commit update document tx: %w", err)
-	}
-
 	return s.GetDocument(ctx, documentID, params.ActorID)
 }
 
 func (s *Service) UpdateDocumentContent(ctx context.Context, documentID uuid.UUID, params UpdateDocumentContentParams) (DocumentResponse, error) {
-	var (
-		currentTitle   string
-		currentContent sql.NullString
-	)
-	if err := s.pool.QueryRow(ctx,
-		`SELECT d.title, d.content_markdown
-		   FROM document d
-		   JOIN teamspace t
-		     ON t.id = d.teamspace_id
-		    AND t.deleted_at IS NULL
-		   JOIN teamspace_member tm
-		     ON tm.teamspace_id = d.teamspace_id
-		    AND tm.user_id = $2
-		  WHERE d.id = $1
-		    AND d.archived_at IS NULL`,
-		documentID, params.ActorID,
-	).Scan(&currentTitle, &currentContent); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return DocumentResponse{}, s.documentAccessError(ctx, documentID, params.ActorID)
-		}
-		return DocumentResponse{}, fmt.Errorf("documents: load document content for update: %w", err)
-	}
-
-	if nullStringEqual(params.ContentMarkdown, currentContent) {
-		return s.GetDocument(ctx, documentID, params.ActorID)
-	}
-
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return DocumentResponse{}, fmt.Errorf("documents: begin update document content tx: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx,
-		`UPDATE document
-		    SET content_markdown = $2,
-		        updated_by = $3,
-		        updated_at = now()
-		  WHERE id = $1`,
-		documentID, nullString(params.ContentMarkdown), params.ActorID,
-	); err != nil {
-		return DocumentResponse{}, classifyMutationError("update document content", err)
-	}
-
-	if err := s.maybeCreateDocumentSnapshotInTx(ctx, tx, documentID, currentTitle, params.ContentMarkdown, params.ActorID); err != nil {
 		return DocumentResponse{}, err
 	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return DocumentResponse{}, fmt.Errorf("documents: commit update document content tx: %w", err)
+	defer tx.Rollback(ctx)
+	doc, err := s.lockDocumentInTx(ctx, tx, documentID, params.ActorID)
+	if err != nil {
+		return DocumentResponse{}, err
 	}
-
+	if doc.Kind != DocumentKindMarkdown {
+		return DocumentResponse{}, fmt.Errorf("%w: spreadsheet content requires the spreadsheet API", ErrBadRequest)
+	}
+	if !nullStringEqual(params.ContentMarkdown, doc.Content) {
+		if _, err = tx.Exec(ctx, `UPDATE document SET content_markdown=$2,updated_by=$3,updated_at=now() WHERE id=$1`, documentID, nullString(params.ContentMarkdown), params.ActorID); err != nil {
+			return DocumentResponse{}, classifyMutationError("update document content", err)
+		}
+		if err = s.maybeCreateDocumentSnapshotInTx(ctx, tx, documentID, doc.Title, params.ContentMarkdown, params.ActorID); err != nil {
+			return DocumentResponse{}, err
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return DocumentResponse{}, err
+	}
 	return s.GetDocument(ctx, documentID, params.ActorID)
 }
 
@@ -1009,7 +991,7 @@ func (s *Service) ListDocumentHistory(ctx context.Context, documentID, userID uu
 	}
 
 	rows, err := s.pool.Query(ctx,
-		`SELECT h.title,
+		`SELECT h.id, h.kind, h.spreadsheet_revision, h.spreadsheet_structure_epoch, h.title,
 		        h.content_markdown,
 		        h.edited_by,
 		        h.created_at,
@@ -1020,12 +1002,15 @@ func (s *Service) ListDocumentHistory(ctx context.Context, documentID, userID uu
 		        u.custom_status_emoji,
 		        u.custom_status_expires_at
 		   FROM document_history h
+		   JOIN document d ON d.id=h.document_id AND d.archived_at IS NULL
+		   JOIN teamspace t ON t.id=d.teamspace_id AND t.deleted_at IS NULL
+		   JOIN teamspace_member m ON m.teamspace_id=t.id AND m.user_id=$3
 		   JOIN users u
 		     ON u.id = h.edited_by
 		  WHERE h.document_id = $1
 		  ORDER BY h.created_at DESC, h.id DESC
 		  LIMIT $2`,
-		documentID, s.historyLimit,
+		documentID, s.historyLimit, userID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("documents: list document history: %w", err)
@@ -1042,6 +1027,7 @@ func (s *Service) ListDocumentHistory(ctx context.Context, documentID, userID uu
 			statusExpires sql.NullTime
 		)
 		if err := rows.Scan(
+			&item.ID, &item.Kind, &item.SpreadsheetRevision, &item.SpreadsheetStructureEpoch,
 			&item.Title,
 			&content,
 			&item.EditedBy,
@@ -1374,6 +1360,13 @@ func (s *Service) maybeCreateDocumentSnapshotInTx(
 	contentMarkdown *string,
 	actorID uuid.UUID,
 ) error {
+	var kind string
+	if err := tx.QueryRow(ctx, `SELECT kind FROM document WHERE id = $1`, documentID).Scan(&kind); err != nil {
+		return err
+	}
+	if kind == DocumentKindSpreadsheet {
+		return s.createSpreadsheetSnapshotInTx(ctx, tx, documentID, title, actorID)
+	}
 	var (
 		latestTitle   string
 		latestContent sql.NullString
@@ -1394,8 +1387,8 @@ func (s *Service) maybeCreateDocumentSnapshotInTx(
 	}
 
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO document_history (document_id, title, content_markdown, edited_by)
-		 VALUES ($1, $2, $3, $4)`,
+		`INSERT INTO document_history (document_id, title, content_markdown, edited_by, created_at)
+		 VALUES ($1, $2, $3, $4, GREATEST(clock_timestamp(),COALESCE((SELECT max(created_at)+interval '1 microsecond' FROM document_history WHERE document_id=$1),'-infinity'::timestamptz)))`,
 		documentID, title, nullString(contentMarkdown), actorID,
 	); err != nil {
 		return fmt.Errorf("documents: insert document snapshot: %w", err)

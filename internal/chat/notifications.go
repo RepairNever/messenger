@@ -65,17 +65,15 @@ func (s *Service) UpdateReadCursor(ctx context.Context, p UpdateReadCursorParams
 
 	directDeliveries := make([]DirectDelivery, 0, 1)
 
-	counter, err := s.buildUnreadCounterTx(ctx, tx, p.ChannelID, p.UserID, persistedReadSeq)
-	if err != nil {
-		return UpdateReadCursorResult{}, fmt.Errorf("chat.UpdateReadCursor build unread counter: %w", err)
-	}
-
-	directDeliveries = append(directDeliveries, s.buildReadCounterUpdatedDelivery(p.ChannelID, p.UserID, counter))
-
 	resolvedIDs, err := s.resolveConversationNotificationsTx(ctx, tx, p.ChannelID, p.UserID)
 	if err != nil {
 		return UpdateReadCursorResult{}, fmt.Errorf("chat.UpdateReadCursor resolve notifications: %w", err)
 	}
+	counter, err := s.buildUnreadCounterTx(ctx, tx, p.ChannelID, p.UserID)
+	if err != nil {
+		return UpdateReadCursorResult{}, fmt.Errorf("chat.UpdateReadCursor build unread counter: %w", err)
+	}
+	directDeliveries = append(directDeliveries, s.buildReadCounterUpdatedDelivery(p.ChannelID, p.UserID, counter))
 	for _, notificationID := range resolvedIDs {
 		directDeliveries = append(directDeliveries, s.buildNotificationResolvedDelivery(p.ChannelID, p.UserID, notificationID))
 	}
@@ -280,7 +278,32 @@ func (s *Service) loadLastReadSeqTx(ctx context.Context, tx pgx.Tx, channelID, u
 	return lastReadSeq, nil
 }
 
-func (s *Service) buildUnreadCounterTx(ctx context.Context, tx pgx.Tx, channelID, userID uuid.UUID, lastReadSeq int64) (*packetspb.UnreadCounter, error) {
+func (s *Service) buildUnreadCounterTx(ctx context.Context, tx pgx.Tx, channelID, userID uuid.UUID) (*packetspb.UnreadCounter, error) {
+	// Serialize counter snapshots for this member until the surrounding domain
+	// transaction commits. Reload the read cursor after obtaining the lock: a
+	// snapshot calculated before waiting could otherwise get a newer revision.
+	var revision int64
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO conversation_unread_revisions (channel_id, user_id, revision)
+		VALUES ($1, $2, 1)
+		ON CONFLICT (channel_id, user_id) DO UPDATE
+		    SET revision = conversation_unread_revisions.revision + 1
+		RETURNING revision`, channelID, userID).Scan(&revision); err != nil {
+		return nil, fmt.Errorf("buildUnreadCounterTx revision: %w", err)
+	}
+	lastReadSeq, err := s.loadLastReadSeqTx(ctx, tx, channelID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("buildUnreadCounterTx read cursor: %w", err)
+	}
+	var lastMessageSeq, lastRootMessageSeq int64
+	if err := tx.QueryRow(ctx, `
+		SELECT c.next_seq, COALESCE((
+		    SELECT MAX(m.channel_seq) FROM messages m
+		     WHERE m.channel_id = c.id AND m.thread_root_id IS NULL
+		), 0)
+		FROM channels c WHERE c.id = $1`, channelID).Scan(&lastMessageSeq, &lastRootMessageSeq); err != nil {
+		return nil, fmt.Errorf("buildUnreadCounterTx message cursors: %w", err)
+	}
 	// Fetch notification level to respect mute/mentions-only settings.
 	level, err := s.getNotificationLevelTx(ctx, tx, channelID, userID)
 	if err != nil {
@@ -295,6 +318,9 @@ func (s *Service) buildUnreadCounterTx(ctx context.Context, tx pgx.Tx, channelID
 			UnreadMentions:         0,
 			HasUnreadThreadReplies: false,
 			LastReadSeq:            lastReadSeq,
+			Revision:               revision,
+			LastMessageSeq:         lastMessageSeq,
+			LastRootMessageSeq:     lastRootMessageSeq,
 		}, nil
 	}
 
@@ -380,6 +406,9 @@ func (s *Service) buildUnreadCounterTx(ctx context.Context, tx pgx.Tx, channelID
 		UnreadMentions:         unreadMentions,
 		HasUnreadThreadReplies: hasUnreadThreadReplies,
 		LastReadSeq:            lastReadSeq,
+		Revision:               revision,
+		LastMessageSeq:         lastMessageSeq,
+		LastRootMessageSeq:     lastRootMessageSeq,
 	}, nil
 }
 
@@ -573,12 +602,23 @@ func (s *Service) SetNotificationLevel(ctx context.Context, p SetNotificationLev
 		return SetNotificationLevelResult{}, ErrNotMember
 	}
 
-	if err := s.q.SetNotificationLevel(ctx, queries.SetNotificationLevelParams{
-		ChannelID:         p.ChannelID,
-		UserID:            p.UserID,
-		NotificationLevel: int16(p.Level),
-	}); err != nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return SetNotificationLevelResult{}, fmt.Errorf("chat.SetNotificationLevel begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := tx.Exec(ctx, `
+		UPDATE channel_members SET notification_level = $3
+		WHERE channel_id = $1 AND user_id = $2 AND is_archived = false`,
+		p.ChannelID, p.UserID, int16(p.Level)); err != nil {
 		return SetNotificationLevelResult{}, fmt.Errorf("chat.SetNotificationLevel update: %w", err)
+	}
+	counter, err := s.buildUnreadCounterTx(ctx, tx, p.ChannelID, p.UserID)
+	if err != nil {
+		return SetNotificationLevelResult{}, fmt.Errorf("chat.SetNotificationLevel unread counter: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SetNotificationLevelResult{}, fmt.Errorf("chat.SetNotificationLevel commit: %w", err)
 	}
 
 	// Direct delivery to the user's other sessions so they sync the change.
@@ -598,6 +638,7 @@ func (s *Service) SetNotificationLevel(ctx context.Context, p SetNotificationLev
 		Level: p.Level,
 		DirectDeliveries: []DirectDelivery{
 			{UserID: p.UserID.String(), Event: evt},
+			s.buildReadCounterUpdatedDelivery(p.ChannelID, p.UserID, counter),
 		},
 	}, nil
 }

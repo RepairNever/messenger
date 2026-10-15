@@ -1390,9 +1390,6 @@ function routeDocumentIdMatchesSelected(routeID: string): boolean {
 }
 
 async function backToList() {
-  tasksStore.clearSelectedTask()
-  // Refresh the list so any edits made in the card are reflected
-  await tasksStore.loadTaskList()
   await router.push({ name: lastTaskTrackerNonCardRoute.value })
 }
 
@@ -1460,6 +1457,7 @@ watch(
       }
       documentsStore.clearSelectedDocument()
       await documentsStore.selectDocument(documentId, true)
+      if (route.name !== 'documents-card' || routeDocumentId.value !== documentId) return
       if (!routeDocumentIdMatchesSelected(documentId)) {
         if (lastDocumentsCardRoute.value?.documentId === documentId) {
           lastDocumentsCardRoute.value = null

@@ -70,6 +70,7 @@
               <svg class="h-3.5 w-3.5 shrink-0 text-yellow-300" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.175 3.617a1 1 0 0 0 .95.69h3.804c.969 0 1.371 1.24.588 1.81l-3.078 2.237a1 1 0 0 0-.364 1.118l1.176 3.617c.299.921-.756 1.688-1.54 1.118l-3.077-2.236a1 1 0 0 0-1.176 0l-3.077 2.236c-.784.57-1.839-.197-1.54-1.118l1.176-3.617a1 1 0 0 0-.364-1.118L2.526 9.044c-.783-.57-.38-1.81.588-1.81h3.804a1 1 0 0 0 .95-.69l1.181-3.617z" />
               </svg>
+              <DocumentKindIcon :kind="favorite.kind" class="text-sidebar-textMuted" />
               <span class="min-w-0 flex-1 truncate" :title="favorite.title">{{ favorite.title }}</span>
             </button>
             <button
@@ -154,7 +155,7 @@
                 type="button"
                 class="hidden h-5 w-5 shrink-0 items-center justify-center rounded text-sidebar-textMuted group-hover:flex group-focus-within:flex hover:bg-sidebar-hover hover:text-sidebar-text"
                 :data-testid="`documents-teamspace-add-${teamspace.id}`"
-                title="Add root document"
+                title="Add document or spreadsheet"
                 @click.stop="openCreateDocument(teamspace.id, null)"
               >
                 +
@@ -177,6 +178,7 @@
                 :collapsed-document-ids="collapsedDocumentIds"
                 @open-document="$emit('openDocument', $event)"
                 @add-child="openCreateDocument(teamspace.id, $event)"
+                @add-child-spreadsheet="openCreateDocument(teamspace.id, $event, 'spreadsheet')"
                 @toggle-collapse="toggleDocument"
                 @documents-deleted="$emit('documentsDeleted', $event)"
               />
@@ -192,11 +194,12 @@
       v-if="createModalOpen"
       class="dlg-overlay z-50"
       @click.self="closeCreateModal"
+      @keydown.esc="closeCreateModal"
     >
       <div class="dlg-window max-w-md" role="dialog" aria-modal="true">
         <div class="mb-4 flex items-center justify-between gap-3">
           <h3 class="dlg-title">
-            {{ createParentDocumentId ? 'New child document' : 'New document' }}
+            {{ createKind === 'spreadsheet' ? 'New spreadsheet' : (createParentDocumentId ? 'New child document' : 'New document') }}
           </h3>
           <button
             type="button"
@@ -211,20 +214,33 @@
 
         <div class="space-y-3">
           <div>
-            <label class="dlg-label">Title</label>
+            <label for="documents-create-kind" class="dlg-label">Type</label>
+            <select id="documents-create-kind" v-model="createKind" class="dlg-input" data-testid="documents-create-kind" :disabled="createSaving">
+              <option value="markdown">Document</option>
+              <option value="spreadsheet">Spreadsheet</option>
+            </select>
+          </div>
+          <div>
+            <label for="documents-create-title" class="dlg-label">Title</label>
             <input
+              id="documents-create-title"
               v-model="createTitle"
               type="text"
               class="dlg-input"
-              placeholder="Document title"
+              :placeholder="createKind === 'spreadsheet' ? 'Spreadsheet title' : 'Document title'"
+              :disabled="createSaving"
+              data-testid="documents-create-title"
             >
           </div>
-          <div>
-            <label class="dlg-label">Initial markdown</label>
+          <div v-if="createKind === 'markdown'">
+            <label for="documents-create-content" class="dlg-label">Initial markdown</label>
             <textarea
+              id="documents-create-content"
               v-model="createContent"
               class="dlg-input min-h-[120px]"
               placeholder="# Notes"
+              :disabled="createSaving"
+              data-testid="documents-create-content"
             />
           </div>
           <p v-if="createError" class="text-xs text-app-danger">{{ createError }}</p>
@@ -243,6 +259,7 @@
             type="button"
             class="dlg-btn dlg-btn-primary"
             :disabled="createSaving || !createTitle.trim()"
+            data-testid="documents-create-submit"
             @click="submitCreateDocument"
           >
             {{ createSaving ? 'Creating...' : 'Create' }}
@@ -255,7 +272,7 @@
 
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue'
-import type { SidebarDocumentNode } from '@/services/http/documentsApi'
+import type { DocumentKind, SidebarDocumentNode } from '@/services/http/documentsApi'
 import type { FavoriteSidebarDocument } from '@/stores/documents'
 import { useDocumentsStore } from '@/stores/documents'
 import { normalizeDocumentNodes } from '@/utils/documentsUtils'
@@ -268,6 +285,7 @@ import {
   saveCollapsedDocumentsNodeIds,
 } from '@/services/storage/documentsNodeCollapseStorage'
 import DocumentsTreeNode from './DocumentsTreeNode.vue'
+import DocumentKindIcon from './DocumentKindIcon.vue'
 
 const props = defineProps<{
   selectedTeamspaceId: string | null
@@ -290,6 +308,7 @@ const createTeamspaceId = ref<string | null>(null)
 const createParentDocumentId = ref<string | null>(null)
 const createTitle = ref('')
 const createContent = ref('')
+const createKind = ref<DocumentKind>('markdown')
 const createSaving = ref(false)
 const createError = ref('')
 const treeScrollRef = ref<HTMLElement | null>(null)
@@ -403,23 +422,25 @@ async function removeFavorite(documentId: string) {
   }
 }
 
-function openCreateDocument(teamspaceId: string, parentDocumentId: string | null) {
+function openCreateDocument(teamspaceId: string, parentDocumentId: string | null, kind: DocumentKind = 'markdown') {
   createTeamspaceId.value = teamspaceId
   createParentDocumentId.value = parentDocumentId
   createTitle.value = ''
   createContent.value = ''
+  createKind.value = kind
   createError.value = ''
   createModalOpen.value = true
 }
 
 function closeCreateModal() {
+  if (createSaving.value) return
   createModalOpen.value = false
   createSaving.value = false
   createError.value = ''
 }
 
 async function submitCreateDocument() {
-  if (!createTeamspaceId.value) return
+  if (!createTeamspaceId.value || !createTitle.value.trim() || createSaving.value) return
   createSaving.value = true
   createError.value = ''
   try {
@@ -427,8 +448,11 @@ async function submitCreateDocument() {
       teamspace_id: createTeamspaceId.value,
       parent_document_id: createParentDocumentId.value,
       title: createTitle.value.trim(),
-      content_markdown: createContent.value.trim() ? createContent.value : null,
+      ...(createKind.value === 'spreadsheet'
+        ? { kind: 'spreadsheet' as const }
+        : { content_markdown: createContent.value.trim() ? createContent.value : null }),
     })
+    createSaving.value = false
     closeCreateModal()
     emit('openDocument', row.id)
   } catch (e) {

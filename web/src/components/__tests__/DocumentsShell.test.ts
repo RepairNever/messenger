@@ -1,6 +1,10 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import DocumentsShell from '@/components/documents/DocumentsShell.vue'
+import { reactive } from 'vue'
+
+const documentsStoreMock = reactive({ selectedDocument: null as null | { id: string; kind?: 'markdown' | 'spreadsheet' } })
+vi.mock('@/stores/documents', () => ({ useDocumentsStore: () => documentsStoreMock }))
 
 vi.mock('@/components/ResizableSidebar.vue', () => ({
   default: {
@@ -32,7 +36,26 @@ vi.mock('@/components/documents/DocumentSearchView.vue', () => ({
   },
 }))
 
+vi.mock('@/components/documents/SpreadsheetDocumentCard.vue', () => ({
+  default: { template: '<section data-testid="spreadsheet-document-card" />' },
+}))
+
 describe('DocumentsShell', () => {
+  it('selects the spreadsheet card and keeps legacy documents on the Markdown card', async () => {
+    documentsStoreMock.selectedDocument = { id: 'sheet-1', kind: 'spreadsheet' }
+    const wrapper = mount(DocumentsShell, {
+      props: { sidebarCollapsed: true, selectedTeamspaceId: 'teamspace-1', selectedDocumentId: 'sheet-1', searchQuery: '', viewMode: 'card' },
+    })
+    expect(wrapper.find('[data-testid="spreadsheet-document-card"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="document-card"]').exists()).toBe(false)
+
+    documentsStoreMock.selectedDocument = { id: 'legacy-document' }
+    await wrapper.setProps({ selectedDocumentId: 'legacy-document' })
+    expect(wrapper.find('[data-testid="document-card"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="spreadsheet-document-card"]').exists()).toBe(false)
+    wrapper.unmount()
+    documentsStoreMock.selectedDocument = null
+  })
   it('renders the sidebar when not collapsed', () => {
     const wrapper = mount(DocumentsShell, {
       props: {

@@ -234,6 +234,9 @@ func (s *Service) buildResponse(ctx context.Context, userID uuid.UUID, session q
 			UnreadMentions:         int32(row.UnreadMentions),
 			HasUnreadThreadReplies: row.HasUnreadThreadReplies,
 			LastReadSeq:            row.LastReadSeq,
+			Revision:               row.Revision,
+			LastMessageSeq:         row.LastMessageSeq,
+			LastRootMessageSeq:     row.LastRootMessageSeq,
 		})
 	}
 

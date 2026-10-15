@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"msgnr/internal/events"
 	packetspb "msgnr/internal/gen/proto"
 )
 
@@ -131,7 +132,7 @@ func (s *Service) ListReactionUsers(
 
 // AddReaction idempotently adds a reaction and emits reaction_updated.
 func (s *Service) AddReaction(ctx context.Context, p ReactionParams) (ReactionResult, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return ReactionResult{}, fmt.Errorf("chat.AddReaction begin tx: %w", err)
 	}
@@ -181,7 +182,7 @@ func (s *Service) AddReaction(ctx context.Context, p ReactionParams) (ReactionRe
 
 // RemoveReaction idempotently removes a reaction and emits reaction_updated.
 func (s *Service) RemoveReaction(ctx context.Context, p ReactionParams) (ReactionResult, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return ReactionResult{}, fmt.Errorf("chat.RemoveReaction begin tx: %w", err)
 	}

@@ -19,6 +19,7 @@ const documentsStoreMock = reactive({
     parent_document_id: string | null
     parent_title: string | null
     title: string
+    kind?: 'markdown' | 'spreadsheet'
     content_markdown: string | null
     created_by: string
     updated_by: string
@@ -188,6 +189,20 @@ describe('DocumentCard', () => {
         ],
       },
     ]
+  })
+
+  it('flushes a dirty Markdown draft to its original document when opening a spreadsheet', async () => {
+    documentsStoreMock.updateDocumentContent.mockImplementation(async (id: string, payload: Record<string, unknown>) => buildDocumentRow({ id, content_markdown: payload.content_markdown as string }))
+    const wrapper = mount(DocumentCard, {
+      global: { stubs: { TaskDescriptionEditor: editorStub(), UserAvatar: true, Teleport: true } },
+    })
+    await wrapper.get('[data-testid="document-content-stub"]').setValue('Unsaved Markdown')
+    documentsStoreMock.selectedDocument = buildDocumentRow({ id: 'sheet-1', kind: 'spreadsheet', content_markdown: null })
+    wrapper.unmount()
+    await flushPromises()
+
+    expect(documentsStoreMock.updateDocumentContent).toHaveBeenCalledWith('doc-3', { content_markdown: 'Unsaved Markdown', force_snapshot: true })
+    expect(documentsStoreMock.updateDocumentContent.mock.calls.every(([id]) => id !== 'sheet-1')).toBe(true)
   })
 
   it('shows the full teamspace-to-document breadcrumb in the header', async () => {

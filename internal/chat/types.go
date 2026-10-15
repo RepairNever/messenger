@@ -369,6 +369,7 @@ type ClearDMConversationHistoryParams struct {
 type ClearDMConversationHistoryResult struct {
 	ConversationID       uuid.UUID
 	DeletedMessagesCount int32
+	DirectDeliveries     []DirectDelivery
 }
 
 type DirectDelivery struct {

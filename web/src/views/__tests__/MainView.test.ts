@@ -1150,6 +1150,30 @@ describe('MainView server unavailable state', () => {
     expect(wrapper.find('[data-testid="document-card"]').exists()).toBe(true)
   })
 
+  it('ignores an older missing document while a newer document route is loading', async () => {
+    const documentsStore = useDocumentsStore(pinia)
+    let finishOld!: () => void
+    let finishNew!: () => void
+    vi.mocked(documentsStore.selectDocument).mockImplementation(id => new Promise<void>(resolve => {
+      if (id === 'old-document') finishOld = resolve
+      else finishNew = () => { documentsStore.selectedDocument = { id, kind: 'spreadsheet', teamspace_id: 'teamspace-1' } as any; resolve() }
+    }))
+    const router = createMainRouter()
+    await router.push('/documents/old-document')
+    await router.isReady()
+    const wrapper = mountAtRoute(router)
+    await flushUi()
+    await router.push('/documents/new-spreadsheet')
+    await flushUi()
+    finishOld()
+    await flushAsyncWork()
+    expect(router.currentRoute.value.params.documentId).toBe('new-spreadsheet')
+    finishNew()
+    await flushAsyncWork()
+    expect(documentsStore.selectedDocument?.id).toBe('new-spreadsheet')
+    wrapper.unmount()
+  })
+
   it('opens documents mode with its sidebar when selected from collapsed chat', async () => {
     const router = createMainRouter()
     router.push('/')
@@ -1463,6 +1487,41 @@ describe('MainView server unavailable state', () => {
     await flushUi()
 
     expect(router.currentRoute.value.name).toBe('tasks-list')
+  })
+
+  it('returns to the task list immediately without waiting for a list request', async () => {
+    const router = createMainRouter()
+    await router.push('/tasks')
+    await router.isReady()
+
+    const wrapper = mountAtRoute(router)
+    await flushUi()
+    const vm = wrapper.findComponent(MainView).vm as any
+    vm.selectedTemplateFilter = 'tpl-1'
+    await vm.openTask('TASK-555')
+    await flushUi()
+
+    const tasksStore = useTasksStore(pinia)
+    const loadList = vi.mocked(tasksStore.loadTaskList)
+    loadList.mockClear()
+    let finishListRequest!: () => void
+    loadList.mockReturnValue(new Promise<void>(resolve => {
+      finishListRequest = resolve
+    }))
+
+    const navigation = vm.backToList()
+    try {
+      await flushAsyncWork()
+      expect(router.currentRoute.value.name).toBe('tasks-list')
+      expect(wrapper.find('[data-testid="task-list-view"]').exists()).toBe(true)
+      expect(tasksStore.selectedTask).toBeNull()
+      expect(vm.selectedTemplateFilter).toBe('tpl-1')
+      expect(loadList).not.toHaveBeenCalled()
+    } finally {
+      finishListRequest()
+      await navigation
+      wrapper.unmount()
+    }
   })
 
   it('returns to kanban after opening card from kanban route', async () => {

@@ -202,6 +202,212 @@ describe('MessageBubble reactions', () => {
     vi.useRealTimers()
   })
 
+  describe('adaptive grouped-message actions', () => {
+    type HorizontalRect = { left: number; right: number }
+    type ToolbarGeometry = {
+      row: HorizontalRect
+      stack: HorizontalRect
+      toolbarWidth: number
+      clip?: HorizontalRect
+    }
+
+    class ToolbarResizeObserver {
+      static instances: ToolbarResizeObserver[] = []
+      readonly observed = new Set<Element>()
+
+      constructor(private readonly callback: ResizeObserverCallback) {
+        ToolbarResizeObserver.instances.push(this)
+      }
+
+      observe = (element: Element) => { this.observed.add(element) }
+      unobserve = (element: Element) => { this.observed.delete(element) }
+      disconnect = vi.fn(() => { this.observed.clear() })
+
+      static resize(element: Element) {
+        for (const observer of this.instances) {
+          if (observer.observed.has(element)) {
+            observer.callback([{ target: element } as ResizeObserverEntry], observer as unknown as ResizeObserver)
+          }
+        }
+      }
+    }
+
+    const rectReaders = new Map<Element, () => HorizontalRect>()
+    let mounted: ReturnType<typeof mount> | null = null
+    let host: HTMLDivElement | null = null
+    let restoreRectMock: (() => void) | null = null
+
+    beforeEach(() => {
+      ToolbarResizeObserver.instances = []
+      vi.stubGlobal('ResizeObserver', ToolbarResizeObserver)
+      vi.stubGlobal('innerWidth', 1000)
+      const rectMock = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+        const rect = rectReaders.get(this)?.() ?? { left: 0, right: 0 }
+        return new DOMRect(rect.left, 100, rect.right - rect.left, 36)
+      })
+      restoreRectMock = () => rectMock.mockRestore()
+      useAuthStore().user = { id: 'user-1', email: 'u1@example.com', displayName: 'U1', role: 'member' }
+    })
+
+    afterEach(() => {
+      mounted?.unmount()
+      mounted = null
+      host?.remove()
+      host = null
+      rectReaders.clear()
+      restoreRectMock?.()
+      vi.unstubAllGlobals()
+    })
+
+    function mountToolbar(own: boolean, overrides: Partial<ToolbarGeometry> = {}) {
+      const geometry: ToolbarGeometry = {
+        row: { left: 100, right: 900 },
+        stack: own ? { left: 600, right: 892 } : { left: 147, right: 400 },
+        toolbarWidth: 120,
+        ...overrides,
+      }
+      host = document.createElement('div')
+      document.body.appendChild(host)
+      if (geometry.clip) {
+        host.style.overflowX = 'hidden'
+        rectReaders.set(host, () => geometry.clip!)
+        Object.defineProperty(host, 'clientWidth', {
+          configurable: true,
+          get: () => geometry.clip!.right - geometry.clip!.left,
+        })
+      }
+      mounted = mount(MessageBubble, {
+        props: {
+          message: buildMessage({ senderId: own ? 'user-1' : 'user-2', reactions: [], myReactions: [] }),
+          showHeader: false,
+        },
+        attachTo: host,
+      })
+      const row = mounted.get('[data-testid="message-row"]')
+      const stack = mounted.get('[data-testid="message-stack"]')
+      const actions = mounted.get('[data-testid="grouped-message-actions"]')
+      rectReaders.set(row.element, () => geometry.row)
+      rectReaders.set(stack.element, () => geometry.stack)
+      rectReaders.set(actions.element, () => ({ left: 0, right: geometry.toolbarWidth }))
+      return { wrapper: mounted, row, stack, actions, geometry, clip: host }
+    }
+
+    it.each([
+      { own: true, expectedLeft: 376 },
+      { own: false, expectedLeft: 304 },
+    ])('keeps actions beside a fitting message (own=$own)', async ({ own, expectedLeft }) => {
+      const { row, actions } = mountToolbar(own)
+      await row.trigger('mouseenter')
+      await flushAll()
+
+      expect((actions.element as HTMLElement).style.left).toBe(`${expectedLeft}px`)
+      expect(actions.classes()).toContain('bg-inherit')
+      expect(actions.classes()).not.toContain('bg-chat-header')
+    })
+
+    it.each([
+      { own: true, expectedLeft: 8 },
+      { own: false, expectedLeft: 672 },
+    ])('overlays the row when beside placement clips (own=$own)', async ({ own, expectedLeft }) => {
+      const { row, actions } = mountToolbar(own, { stack: { left: 108, right: 892 } })
+      await row.trigger('mouseenter')
+      await flushAll()
+
+      expect((actions.element as HTMLElement).style.left).toBe(`${expectedLeft}px`)
+      expect(actions.classes()).toContain('bg-chat-header')
+    })
+
+    it.each([true, false])('accepts an exact fit but falls back for one pixel of overflow (own=%s)', async own => {
+      const { row, actions, geometry } = mountToolbar(own, {
+        stack: own ? { left: 124, right: 892 } : { left: 147, right: 876 },
+      })
+      await row.trigger('mouseenter')
+      await flushAll()
+      expect((actions.element as HTMLElement).style.left).toBe(own ? '-100px' : '780px')
+      expect(actions.classes()).toContain('bg-inherit')
+
+      await row.trigger('mouseleave')
+      if (own) geometry.stack.left -= 1
+      else geometry.stack.right += 1
+      await row.trigger('mouseenter')
+      await flushAll()
+      expect((actions.element as HTMLElement).style.left).toBe(own ? '8px' : '672px')
+      expect(actions.classes()).toContain('bg-chat-header')
+    })
+
+    it.each([true, false])('uses the clipping ancestor and permits its padding beyond the row (own=%s)', async own => {
+      const { row, actions, geometry } = mountToolbar(own, {
+        row: { left: 120, right: 880 },
+        clip: { left: 100, right: 900 },
+        stack: own ? { left: 224, right: 872 } : { left: 167, right: 776 },
+      })
+      await row.trigger('mouseenter')
+      await flushAll()
+      expect((actions.element as HTMLElement).style.left).toBe(own ? '-20px' : '660px')
+      expect(actions.classes()).toContain('bg-inherit')
+
+      await row.trigger('mouseleave')
+      if (own) geometry.stack.left -= 1
+      else geometry.stack.right += 1
+      await row.trigger('mouseenter')
+      await flushAll()
+      expect((actions.element as HTMLElement).style.left).toBe(own ? '8px' : '632px')
+      expect(actions.classes()).toContain('bg-chat-header')
+    })
+
+    it.each([true, false])('restores beside placement after the toolbar becomes narrower (own=%s)', async own => {
+      const { row, stack, actions, geometry, clip } = mountToolbar(own, {
+        row: { left: 120, right: 880 },
+        clip: { left: 100, right: 900 },
+        stack: own ? { left: 200, right: 872 } : { left: 167, right: 800 },
+      })
+      expect(ToolbarResizeObserver.instances.every(observer => observer.observed.size === 0)).toBe(true)
+      await row.trigger('mouseenter')
+      await flushAll()
+      expect(actions.classes()).toContain('bg-chat-header')
+      for (const element of [row.element, stack.element, actions.element, clip]) {
+        expect(ToolbarResizeObserver.instances.some(observer => observer.observed.has(element))).toBe(true)
+      }
+
+      geometry.toolbarWidth = 80
+      ToolbarResizeObserver.resize(actions.element)
+      await flushAll()
+      expect((actions.element as HTMLElement).style.left).toBe(own ? '-4px' : '684px')
+      expect(actions.classes()).toContain('bg-inherit')
+
+      geometry.toolbarWidth = 120
+      ToolbarResizeObserver.resize(actions.element)
+      await flushAll()
+      expect(actions.classes()).toContain('bg-chat-header')
+    })
+
+    it('keeps measuring while focused, stops after focus leaves, and disconnects on unmount', async () => {
+      const { wrapper, row, actions } = mountToolbar(true)
+      await row.trigger('focusin')
+      await flushAll()
+      expect((actions.element as HTMLElement).style.left).toBe('376px')
+      await row.trigger('mouseleave')
+      expect(ToolbarResizeObserver.instances.some(observer => observer.observed.size > 0)).toBe(true)
+
+      await row.trigger('focusout', { relatedTarget: actions.get('button[title="More actions"]').element })
+      expect(ToolbarResizeObserver.instances.some(observer => observer.observed.size > 0)).toBe(true)
+      await row.trigger('focusout', { relatedTarget: document.body })
+      await flushAll()
+      expect(ToolbarResizeObserver.instances.every(observer => observer.observed.size === 0)).toBe(true)
+
+      await row.trigger('mouseenter')
+      await flushAll()
+      const activeObservers = ToolbarResizeObserver.instances.filter(observer => observer.observed.size > 0)
+      expect(activeObservers.length).toBeGreaterThan(0)
+      wrapper.unmount()
+      mounted = null
+      for (const observer of activeObservers) {
+        expect(observer.disconnect).toHaveBeenCalled()
+        expect(observer.observed.size).toBe(0)
+      }
+    })
+  })
+
   it('clicking own reaction sends remove', async () => {
     const auth = useAuthStore()
     const chat = useChatStore()

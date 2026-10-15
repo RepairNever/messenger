@@ -18,8 +18,13 @@
       />
     </ResizableSidebar>
     <main class="flex-1 min-w-0 overflow-hidden">
+      <SpreadsheetDocumentCard
+        v-if="viewMode === 'card' && documentsStore.selectedDocument?.kind === 'spreadsheet'"
+        @back="emit('back')"
+        @open-parent="emit('openParent', $event)"
+      />
       <DocumentCard
-        v-if="viewMode === 'card'"
+        v-else-if="viewMode === 'card'"
         @back="emit('back')"
         @open-parent="emit('openParent', $event)"
       />
@@ -50,6 +55,10 @@ import DocumentsSidebar from '@/components/documents/DocumentsSidebar.vue'
 import TeamspacesView from '@/components/documents/TeamspacesView.vue'
 import DocumentCard from '@/components/documents/DocumentCard.vue'
 import DocumentSearchView from '@/components/documents/DocumentSearchView.vue'
+import SpreadsheetDocumentCard from '@/components/documents/SpreadsheetDocumentCard.vue'
+import { useDocumentsStore } from '@/stores/documents'
+
+const documentsStore = useDocumentsStore()
 
 defineProps<{
   sidebarCollapsed: boolean

@@ -3657,39 +3657,49 @@ func scanTask(row pgx.Row) (TaskRow, error) {
 	return scanOneTask(row)
 }
 
-// scanOneTaskWithTotal scans taskSelectColumns followed by the window-
-// function column status_total in one Scan call.  Used by the ListTasks rows
-// loop where the SELECT list is taskSelectColumns + status_total.
-func scanOneTaskWithTotal(s scanner, statusTotal *int) (TaskRow, error) {
+type taskListPageRow struct {
+	task        *TaskRow
+	statusID    uuid.UUID
+	statusTotal int
+	inFlatPage  bool
+	inGroupPage bool
+}
+
+// A status total is returned even when its requested page is empty. Task
+// columns are nullable on those metadata-only rows.
+func scanTaskListPageRow(s scanner) (taskListPageRow, error) {
 	var (
-		id, templateID, statusID, createdBy, updatedBy uuid.UUID
-		publicID, snapshotPrefix, title                string
-		description                                    sql.NullString
+		result                                         taskListPageRow
+		id, templateID, statusID, createdBy, updatedBy uuid.NullUUID
+		publicID, snapshotPrefix, title, description   sql.NullString
 		discussionChannelID, parentTaskID              uuid.NullUUID
-		seqNum                                         int64
-		createdAt, updatedAt                           time.Time
+		seqNum                                         sql.NullInt64
+		createdAt, updatedAt                           sql.NullTime
 	)
 	if err := s.Scan(
 		&id, &publicID, &templateID, &discussionChannelID, &snapshotPrefix, &seqNum,
 		&title, &description, &statusID,
 		&parentTaskID, &createdBy, &updatedBy,
 		&createdAt, &updatedAt,
-		statusTotal,
+		&result.statusID, &result.statusTotal, &result.inFlatPage, &result.inGroupPage,
 	); err != nil {
-		return TaskRow{}, err
+		return taskListPageRow{}, err
+	}
+	if !id.Valid {
+		return result, nil
 	}
 	t := TaskRow{
-		ID:                     id,
-		PublicID:               publicID,
-		TemplateID:             templateID,
-		TemplateSnapshotPrefix: snapshotPrefix,
-		SequenceNumber:         seqNum,
-		Title:                  title,
-		StatusID:               statusID,
-		CreatedBy:              createdBy,
-		UpdatedBy:              updatedBy,
-		CreatedAt:              createdAt,
-		UpdatedAt:              updatedAt,
+		ID:                     id.UUID,
+		PublicID:               publicID.String,
+		TemplateID:             templateID.UUID,
+		TemplateSnapshotPrefix: snapshotPrefix.String,
+		SequenceNumber:         seqNum.Int64,
+		Title:                  title.String,
+		StatusID:               statusID.UUID,
+		CreatedBy:              createdBy.UUID,
+		UpdatedBy:              updatedBy.UUID,
+		CreatedAt:              createdAt.Time,
+		UpdatedAt:              updatedAt.Time,
 	}
 	if description.Valid {
 		t.Description = &description.String
@@ -3700,7 +3710,8 @@ func scanOneTaskWithTotal(s scanner, statusTotal *int) (TaskRow, error) {
 	if parentTaskID.Valid {
 		t.ParentTaskID = &parentTaskID.UUID
 	}
-	return t, nil
+	result.task = &t
+	return result, nil
 }
 
 // fieldDefinitionIDs extracts the FieldDefinitionID from each input.
@@ -3932,11 +3943,9 @@ type ListTasksStatusPortionResponse struct {
 // ListTasks returns a globally sorted flat page plus status-grouped
 // compatibility data with optional search, filters and sorting.
 //
-// Implementation uses two queries total regardless of status count:
-//  1. Fetch all statuses (ordered by sort_order).
-//  2. Fetch all matching tasks in the requested sort order with COUNT(*) OVER
-//     (PARTITION BY t.status_id) as a window function so per-status totals come
-//     for free. Global and per-group pagination are then applied in Go.
+// PostgreSQL ranks narrow task keys and selects both the global page and each
+// compatibility group's page before loading task bodies. Exact totals remain
+// available when the requested page is empty.
 //
 // Dynamic WHERE/ORDER BY is hand-written because sqlc cannot express variable
 // filter predicates or sort columns. Every user-supplied value goes through
@@ -3952,62 +3961,53 @@ func (s *Service) ListTasks(ctx context.Context, p ListTasksParams) (ListTasksRe
 		return ListTasksResponse{}, fmt.Errorf("tasks: list statuses for grouping: %w", err)
 	}
 
-	// Index statuses by ID for O(1) lookup during group assembly.
-	statusByID := make(map[uuid.UUID]StatusRow, len(statusRows))
-	for _, sr := range statusRows {
-		statusByID[sr.ID] = mapStatus(sr)
-	}
-
-	// 2. Single query: all matching tasks + per-status count via window function.
+	// 2. One query: exact totals plus only the requested task pages.
 	q, args := buildTaskQuery(p)
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return ListTasksResponse{}, fmt.Errorf("tasks: list tasks: %w", err)
 	}
 
-	// rawGroup accumulates all rows for one status before pagination is applied.
 	type rawGroup struct {
 		total int
 		tasks []TaskRow
 	}
 	byStatus := make(map[uuid.UUID]*rawGroup)
-	allTasks := make([]TaskRow, 0)
+	flatPage := make([]TaskRow, 0, p.PageSize)
 
 	defer rows.Close()
 	for rows.Next() {
-		var statusTotal int
-		t, err := scanOneTaskWithTotal(rows, &statusTotal)
+		row, err := scanTaskListPageRow(rows)
 		if err != nil {
 			return ListTasksResponse{}, fmt.Errorf("tasks: scan task row: %w", err)
 		}
-		g := byStatus[t.StatusID]
+		g := byStatus[row.statusID]
 		if g == nil {
-			g = &rawGroup{total: statusTotal}
-			byStatus[t.StatusID] = g
+			g = &rawGroup{total: row.statusTotal, tasks: []TaskRow{}}
+			byStatus[row.statusID] = g
 		}
-		g.tasks = append(g.tasks, t)
-		allTasks = append(allTasks, t)
+		if row.task != nil {
+			if row.inGroupPage {
+				g.tasks = append(g.tasks, *row.task)
+			}
+			if row.inFlatPage {
+				flatPage = append(flatPage, *row.task)
+			}
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return ListTasksResponse{}, fmt.Errorf("tasks: iterate task rows: %w", err)
 	}
 
-	// 3. Assemble groups in status sort_order; apply per-group pagination in Go.
-	offset := (p.Page - 1) * p.PageSize
-	grandTotal := len(allTasks)
-	flatPage := []TaskRow{}
-	if offset < len(allTasks) {
-		end := offset + p.PageSize
-		if end > len(allTasks) {
-			end = len(allTasks)
-		}
-		flatPage = allTasks[offset:end]
+	// 3. Assemble already-paged groups in status sort_order.
+	grandTotal := 0
+	for _, group := range byStatus {
+		grandTotal += group.total
 	}
 
 	groups := make([]TaskGroup, 0, len(statusRows))
 
 	for _, sr := range statusRows {
-		st := statusByID[sr.ID]
 		g := byStatus[sr.ID]
 
 		// Always show active statuses; skip deleted ones with no matching tasks.
@@ -4016,23 +4016,14 @@ func (s *Service) ListTasks(ctx context.Context, p ListTasksParams) (ListTasksRe
 		}
 
 		total := 0
-		var page []TaskRow
+		page := []TaskRow{}
 		if g != nil {
 			total = g.total
-			end := offset + p.PageSize
-			if offset < len(g.tasks) {
-				if end > len(g.tasks) {
-					end = len(g.tasks)
-				}
-				page = g.tasks[offset:end]
-			}
-		}
-		if page == nil {
-			page = []TaskRow{}
+			page = g.tasks
 		}
 
 		groups = append(groups, TaskGroup{
-			Status:   st,
+			Status:   mapStatus(sr),
 			Tasks:    page,
 			Total:    total,
 			Page:     p.Page,
@@ -4288,26 +4279,39 @@ func normalizeListParams(p ListTasksParams) ListTasksParams {
 	return p
 }
 
-// buildTaskQuery returns the full SELECT SQL and its bound args.
-//
-// The SELECT list is taskSelectColumns followed by the window-function column:
-//
-//	COUNT(*) OVER (PARTITION BY t.status_id) AS status_total
-//
-// Callers must scan taskSelectColumns first, then status_total.
+// buildTaskQuery pages narrow ranked keys before joining task bodies. Both page
+// shapes and their totals share one statement snapshot. The numeric offset
+// calculation also keeps arbitrarily large page parameters from overflowing.
 func buildTaskQuery(p ListTasksParams) (string, []any) {
 	args := &argList{}
 
 	where := buildWhereClause(p, args)
 	join, sortCol := buildSortExpr(p.SortBy, p.SortDesc, args)
+	pageIndexPH := args.add(p.Page - 1)
+	pageSizePH := args.add(p.PageSize)
+	offset := fmt.Sprintf("(%s::numeric * %s::numeric)", pageIndexPH, pageSizePH)
+	flatPage := fmt.Sprintf("global_position > %s AND global_position <= %s + %s", offset, offset, pageSizePH)
+	groupPage := fmt.Sprintf("status_position > %s AND status_position <= %s + %s", offset, offset, pageSizePH)
 
 	sql := fmt.Sprintf(
-		`SELECT %s, COUNT(*) OVER (PARTITION BY t.status_id) AS status_total`+
-			` FROM task t`+
-			` JOIN task_status ts ON ts.id = t.status_id%s`+
-			` %s`+
-			` ORDER BY %s`,
-		taskSelectColumns, join, where, sortCol,
+		`WITH ranked AS MATERIALIZED (`+
+			` SELECT t.id, t.status_id,`+
+			` ROW_NUMBER() OVER (ORDER BY %s) AS global_position,`+
+			` ROW_NUMBER() OVER (PARTITION BY t.status_id ORDER BY %s) AS status_position`+
+			` FROM task t JOIN task_status ts ON ts.id = t.status_id%s %s`+
+			`), status_totals AS (`+
+			` SELECT status_id, COUNT(*) AS total FROM ranked GROUP BY status_id`+
+			`), paged AS (`+
+			` SELECT id, status_id, global_position, (%s) AS in_flat_page, (%s) AS in_group_page`+
+			` FROM ranked WHERE (%s) OR (%s)`+
+			`)`+
+			` SELECT %s, totals.status_id, totals.total,`+
+			` COALESCE(paged.in_flat_page, false), COALESCE(paged.in_group_page, false)`+
+			` FROM status_totals totals`+
+			` LEFT JOIN paged ON paged.status_id = totals.status_id`+
+			` LEFT JOIN task t ON t.id = paged.id`+
+			` ORDER BY paged.global_position`,
+		sortCol, sortCol, join, where, flatPage, groupPage, flatPage, groupPage, taskSelectColumns,
 	)
 	return sql, args.values
 }
@@ -5110,7 +5114,7 @@ func (s *Service) CreateComment(ctx context.Context, taskID, authorID uuid.UUID,
 		return nil, fmt.Errorf("%w: max %d attachments allowed", ErrBadRequest, maxCommentAttachments)
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return nil, fmt.Errorf("tasks: begin create comment tx: %w", err)
 	}
@@ -5270,7 +5274,7 @@ func (s *Service) UpdateComment(ctx context.Context, taskID, commentID, actorID 
 		return nil, fmt.Errorf("%w: max %d attachments allowed", ErrBadRequest, maxCommentAttachments)
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return nil, fmt.Errorf("tasks: begin update comment tx: %w", err)
 	}
@@ -5500,7 +5504,7 @@ func (s *Service) UpdateComment(ctx context.Context, taskID, commentID, actorID 
 
 // EnsureCommentThread lazily creates the hidden chat thread backing a task comment.
 func (s *Service) EnsureCommentThread(ctx context.Context, taskID, commentID, actorID uuid.UUID) (*CommentThreadRow, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := events.BeginTx(ctx, s.pool)
 	if err != nil {
 		return nil, fmt.Errorf("tasks: begin ensure comment thread tx: %w", err)
 	}

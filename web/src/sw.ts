@@ -55,6 +55,16 @@ registerRoute(
   }),
 )
 
+// Univer's lazy editor is immutable by content hash. Cache it after first use
+// rather than making every app update download the spreadsheet engine.
+registerRoute(
+  ({ url }) => url.origin === self.location.origin && /\/assets\/SpreadsheetEditor-.*\.(js|css)$/.test(url.pathname),
+  new CacheFirst({
+    cacheName: 'spreadsheet-editor',
+    plugins: [new ExpirationPlugin({ maxEntries: 4, maxAgeSeconds: 30 * 24 * 60 * 60 })],
+  }),
+)
+
 // RNNoise WASM files — large, never change per version, cache aggressively
 registerRoute(
   ({ url }) => /\/rnnoise-.*\.js$/.test(url.pathname),
