@@ -1,0 +1,8 @@
+# Keep the backend build context small; the Go build needs none of these.
+.git
+.env
+web
+.gocache
+server
+server-linux
+msgnr-server

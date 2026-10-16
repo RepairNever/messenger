@@ -1,0 +1,119 @@
+name: msgnr
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: msgnr
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-msgnr}
+      POSTGRES_DB: msgnr
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U msgnr -d msgnr"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  minio:
+    # MinIO removed their official images; pgsty/minio is the community rebuild.
+    image: pgsty/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "127.0.0.1:9000:9000" # S3 API
+      - "127.0.0.1:9001:9001" # web console
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  # One-shot: apply migrations/schema.sql (idempotent, IF NOT EXISTS baseline —
+  # the same file the integration tests use). Dated migrations under
+  # migrations/ are only for upgrading pre-existing databases.
+  migrate:
+    image: postgres:17-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-msgnr}
+    volumes:
+      - ./migrations:/migrations:ro
+    entrypoint: >
+      sh -c 'exec psql -h postgres -U msgnr -d msgnr -v ON_ERROR_STOP=1
+             -f /migrations/schema.sql'
+    restart: "no"
+
+  backend:
+    build: .
+    environment:
+      ENV: production
+      PORT: "8080"
+      METRICS_PORT: "9090"
+      CORS_ALLOWED_ORIGINS: "*"
+      DATABASE_URL: postgres://msgnr:${POSTGRES_PASSWORD:-msgnr}@postgres:5432/msgnr?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_USE_SSL: "false"
+      MINIO_BUCKET: ${MINIO_BUCKET:-task-attachments}
+      # Browser-facing LiveKit URL: ws://localhost:7880 works with the
+      # livekit service below (profile "calls") and published port 7880.
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://localhost:7880}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
+      # Web push stays disabled until VAPID keys are provided:
+      #   go run ./cmd/vapidgen   or   npx web-push generate-vapid-keys
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:9090:9090" # Prometheus /metrics
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+  # Frontend + reverse proxy. The whole app is served on this port.
+  web:
+    build: ./web
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Optional media plane for voice/video calls:
+   #   docker compose --profile calls up -d
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --dev --bind 0.0.0.0
+    profiles: ["calls"]
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "50000-60000:50000-60000/udp"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  miniodata:
