@@ -155,6 +155,7 @@ enum EventType {
   EVENT_TYPE_CALL_RAISED_HANDS_CHANGED = 22;
   EVENT_TYPE_SECRET_HISTORY_INVALIDATED = 23;
   EVENT_TYPE_TASK_COMMENT_CREATED = 24;
+  EVENT_TYPE_SPREADSHEET_CHANGED = 25;
 }
 
 message Envelope {
@@ -599,6 +600,12 @@ message UnreadCounter {
   int32 unread_mentions = 3;
   bool has_unread_thread_replies = 4;
   int64 last_read_seq = 5;
+  // Per-user/conversation revision, committed atomically with the state counted.
+  // Reject older revisions even when their read cursor equals the current one.
+  int64 revision = 6;
+  // Message high-watermark and newest surviving root at counter calculation.
+  int64 last_message_seq = 7;
+  int64 last_root_message_seq = 8;
 }
 
 message ActiveCallSummary {
@@ -722,6 +729,9 @@ message ConversationRemovedEvent {
 }
 
 message MembershipChangedEvent {
+  // Includes hidden task discussion channels. ADDED/JOINED grants realtime
+  // access to the affected user's sessions without adding a sidebar entry.
+  // Emit before message events when creating or restoring membership.
   string conversation_id = 1;
   string user_id = 2;
   MembershipAction action = 3;
@@ -889,6 +899,9 @@ message TaskStatusChangedEvent {
 }
 
 message TaskCommentCreatedEvent {
+  // Invalidate the task's HTTP comment list to obtain full attachment and
+  // author metadata. Scoped to discussion_channel_id when one exists;
+  // otherwise workspace-wide. Consumers must tolerate replay/duplicates.
   string task_id = 1;
   string public_id = 2;                 // e.g. "DEV-42"
   string comment_id = 3;
@@ -908,6 +921,27 @@ message MessageAlertEvent {
   string sender_name = 5;
   string body = 6;
   int32 attachment_count = 7;
+}
+
+// Accepted source cell replacement; clear distinguishes a blank-cell tombstone
+// from an authored JSON cell. Formula calculation caches are not transmitted.
+message SpreadsheetCellPatch {
+  string sheet_id = 1;
+  int32 row = 2;
+  int32 col = 3;
+  string cell_json = 4;
+  bool clear = 5;
+}
+
+message SpreadsheetChangedEvent {
+  string document_id = 1;
+  string actor_id = 2;
+  string operation_id = 3;
+  int64 revision = 4;
+  int64 structure_epoch = 5;
+  // "cells" carries accepted patches; "structure" invalidates the snapshot.
+  string kind = 6;
+  repeated SpreadsheetCellPatch cells = 7;
 }
 
 message ServerEvent {
@@ -946,5 +980,6 @@ message ServerEvent {
     CallRaisedHandsChangedEvent call_raised_hands_changed = 31;
     SecretHistoryInvalidatedEvent secret_history_invalidated = 32;
     TaskCommentCreatedEvent task_comment_created = 33;
+    SpreadsheetChangedEvent spreadsheet_changed = 34;
   }
 }
