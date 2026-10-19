@@ -180,6 +180,85 @@ func raisedHandEventCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	return count
 }
 
+func TestIntegration_ExpireInvites_ExpiresDueInvitesAndResolvesNotificationsOnce(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+	svc := NewService(pool, events.NewStore(pool), &config.Config{CallInviteTTL: time.Minute})
+	caller := seedCallUser(t, ctx, pool, "Caller")
+	channel := seedCallChannel(t, ctx, pool, caller)
+	callID, _ := seedActiveCall(t, ctx, pool, channel, caller)
+	invitees := []uuid.UUID{
+		seedCallUser(t, ctx, pool, "Expired A"),
+		seedCallUser(t, ctx, pool, "Expired B"),
+		seedCallUser(t, ctx, pool, "Still pending"),
+	}
+	invites := make([]uuid.UUID, len(invitees))
+	for i, userID := range invitees {
+		invites[i] = seedPendingInviteWithNotification(t, ctx, pool, callID, channel, caller, userID)
+	}
+	_, err := pool.Exec(ctx, `UPDATE call_invites SET expires_at = now() - interval '1 minute' WHERE id = ANY($1::uuid[])`, invites[:2])
+	require.NoError(t, err)
+
+	result, err := svc.ExpireInvites(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, result.ExpiredCount)
+	require.Len(t, result.DirectDeliveries, 4)
+	cancelled := make(map[string]string)
+	resolved := make(map[string]int)
+	for _, delivery := range result.DirectDeliveries {
+		if evt := delivery.Event.GetCallInviteCancelled(); evt != nil {
+			cancelled[evt.GetInviteId()] = delivery.UserID
+			assert.Equal(t, packetspb.InviteCancelReason_INVITE_CANCEL_REASON_EXPIRED, evt.GetReason())
+		}
+		if evt := delivery.Event.GetNotificationResolved(); evt != nil {
+			assert.Equal(t, delivery.UserID, evt.GetUserId())
+			resolved[delivery.UserID]++
+		}
+	}
+	for i, inviteID := range invites {
+		var state string
+		var notificationResolved bool
+		require.NoError(t, pool.QueryRow(ctx, `SELECT state FROM call_invites WHERE id = $1`, inviteID).Scan(&state))
+		require.NoError(t, pool.QueryRow(ctx, `SELECT is_read AND resolved_at IS NOT NULL FROM notifications WHERE user_id = $1 AND channel_id = $2`, invitees[i], channel).Scan(&notificationResolved))
+		if i < 2 {
+			assert.Equal(t, "expired", state)
+			assert.True(t, notificationResolved)
+			assert.Equal(t, invitees[i].String(), cancelled[inviteID.String()])
+			assert.Equal(t, 1, resolved[invitees[i].String()])
+		} else {
+			assert.Equal(t, "created", state)
+			assert.False(t, notificationResolved)
+		}
+	}
+
+	repeated, err := svc.ExpireInvites(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, repeated.ExpiredCount)
+	assert.Empty(t, repeated.DirectDeliveries)
+}
+
+func TestIntegration_ExpireInvites_RollsBackIfNotificationResolutionFails(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+	svc := NewService(pool, events.NewStore(pool), &config.Config{CallInviteTTL: time.Minute})
+	caller := seedCallUser(t, ctx, pool, "Caller")
+	invitee := seedCallUser(t, ctx, pool, "Invitee")
+	channel := seedCallChannel(t, ctx, pool, caller)
+	callID, _ := seedActiveCall(t, ctx, pool, channel, caller)
+	invite := seedPendingInviteWithNotification(t, ctx, pool, callID, channel, caller, invitee)
+	_, err := pool.Exec(ctx, `UPDATE call_invites SET expires_at = now() - interval '1 minute' WHERE id = $1`, invite)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `ALTER TABLE notifications ADD CONSTRAINT test_reject_read CHECK (NOT is_read)`)
+	require.NoError(t, err)
+
+	result, err := svc.ExpireInvites(ctx)
+	require.ErrorContains(t, err, "test_reject_read")
+	assert.Empty(t, result.DirectDeliveries)
+	var state string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT state FROM call_invites WHERE id = $1`, invite).Scan(&state))
+	assert.Equal(t, "created", state)
+}
+
 func TestIntegration_SetHandRaised_OrdersQueueAcrossDuplicateCommandsLeavesAndRejoins(t *testing.T) {
 	pool, _ := testdb.New(t)
 	ctx := context.Background()

@@ -8,6 +8,22 @@
         <span class="font-normal text-app-muted">{{ conversationPrefix }}</span>
         {{ conversation?.title ?? '…' }}
       </div>
+      <div
+        v-if="showHistorySyncStatus || historySyncStatus === 'error'"
+        data-testid="conversation-sync-status"
+        class="min-w-0 truncate text-xs text-app-muted"
+        role="status"
+      >
+        <template v-if="historySyncStatus === 'error'">
+          Couldn't sync ·
+          <button
+            class="text-accent-text hover:underline"
+            data-testid="conversation-sync-retry"
+            @click="chatStore.retryConversationHistory(chatStore.activeChannelId)"
+          >Retry</button>
+        </template>
+        <template v-else>Syncing…</template>
+      </div>
       <div class="ml-auto flex items-center gap-1 shrink-0">
         <div
           v-if="activeConversationCall"
@@ -149,11 +165,13 @@
         </template>
 
         <VirtualMessageTimeline
-          v-else
+          v-show="messages.length > 0"
+          :key="chatStore.activeChannelId"
           ref="messageTimeline"
           :items="messages"
           :scroll-container="scrollEl"
           :keep-rendered-ids="timelinePinnedMessageIds"
+          manage-item-scroll
         >
           <template #default="{ item: msg, index: idx }">
             <div
@@ -227,7 +245,7 @@
           v-if="!isAtBottom"
           data-testid="scroll-to-bottom-btn"
           class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-full border border-chat-border bg-app-tertiary/95 px-3.5 py-2 text-[13px] font-semibold text-app-secondaryText shadow-xl backdrop-blur transition-colors hover:bg-app-tertiary"
-          aria-label="Scroll to latest message"
+          :aria-label="unreadWhileScrolledAway > 0 ? `${unreadWhileScrolledAway} new messages. Scroll to latest message` : 'Scroll to latest message'"
           @click="handleScrollDownBtn"
         >
           <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true">
@@ -236,7 +254,7 @@
           <span
             v-if="unreadWhileScrolledAway > 0"
             class="rounded-full bg-accent px-2 py-0.5 text-[11px] font-bold leading-none text-app-onAccent"
-          >{{ unreadWhileScrolledAway }}</span>
+          >{{ unreadWhileScrolledAway }} new {{ unreadWhileScrolledAway === 1 ? 'message' : 'messages' }}</span>
         </button>
       </Transition>
     </div>
@@ -364,7 +382,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import type { ChatDraftScope } from '@/services/storage/chatDraftStorage'
-import { useChatStore, type Message } from '@/stores/chat'
+import { useChatStore, encryptedDMPayloadsFromEnvelopes, type Message } from '@/stores/chat'
 import { pinnedDialogueId, usePinnedDialogsStore } from '@/stores/pinnedDialogs'
 import { useAuthStore } from '@/stores/auth'
 import { useWsStore } from '@/stores/ws'
@@ -394,7 +412,6 @@ const callStore = useCallStore()
 const offlineQueue = useOfflineQueue()
 const scrollEl = ref<HTMLElement | null>(null)
 interface VirtualMessageTimelineHandle {
-  restoreAnchor: (messageId: string | number, offsetFromViewportTop: number) => boolean
   scrollToMessage: (messageId: string | number, options?: ScrollIntoViewOptions) => Promise<boolean>
 }
 const messageTimeline = ref<VirtualMessageTimelineHandle | null>(null)
@@ -414,12 +431,6 @@ const DEBUG_CHAT_COMPOSER_SCROLL = import.meta.env.DEV
 const topPreloadArmed = ref(true)
 const isAtBottom = ref(true)
 const unreadWhileScrolledAway = ref(0)
-let previousLastMessageId = ''
-
-interface ScrollAnchor {
-  messageId: string
-  offsetFromViewportTop: number
-}
 
 interface ScrollMetrics {
   scrollTop: number
@@ -584,8 +595,16 @@ const statusLabel = computed(() => {
   }
 })
 const showConversationLoadingOverlay = computed(() =>
-  chatStore.isConversationInitialLoading(chatStore.activeChannelId)
+  messages.value.length === 0 && chatStore.isConversationInitialLoading(chatStore.activeChannelId)
 )
+const historySyncStatus = computed(() => chatStore.conversationHistorySyncStatus(chatStore.activeChannelId))
+const showHistorySyncStatus = ref(false)
+watch(() => [chatStore.activeChannelId, historySyncStatus.value], ([, status], _, onCleanup) => {
+  showHistorySyncStatus.value = false
+  if (status !== 'syncing') return
+  const timer = setTimeout(() => { showHistorySyncStatus.value = true }, 1000)
+  onCleanup(() => clearTimeout(timer))
+}, { immediate: true })
 let typingIdleTimer: ReturnType<typeof setTimeout> | null = null
 let typingConversationId = ''
 let typingIsActive = false
@@ -923,6 +942,7 @@ async function handleSend(
     myReactions: [],
     contentMode: encrypted ? 'dm_pairwise_signal_v1' : 'plaintext',
     senderDeviceId: encrypted?.senderDeviceId,
+    encryptedDMPayloads: encryptedDMPayloadsFromEnvelopes(encrypted?.envelopes),
     attachments: payload.attachments.map(att => ({
       id: att.id,
       fileName: att.fileName,
@@ -1307,18 +1327,8 @@ async function preloadOlderHistory() {
   clearForceBottomFlag()
   clearPendingConversationOpenScroll('older-history-prepend')
   loadingOlderHistory.value = true
-  const anchor = captureTopVisibleAnchor(el)
-  const previousHeight = el.scrollHeight
-  const previousTop = el.scrollTop
   try {
-    const loadedCount = await chatStore.loadOlderConversationHistory(conversationId)
-    if (loadedCount <= 0) return
-    await nextTick()
-    const current = scrollEl.value
-    if (!current) return
-    if (!restoreAnchorPosition(current, anchor)) {
-      current.scrollTop = previousTop + (current.scrollHeight - previousHeight)
-    }
+    await chatStore.loadOlderConversationHistory(conversationId)
   } finally {
     loadingOlderHistory.value = false
   }
@@ -1354,44 +1364,11 @@ function handleScroll() {
   }
 }
 
-function captureTopVisibleAnchor(container: HTMLElement): ScrollAnchor | null {
-  const containerRect = container.getBoundingClientRect()
-  const rows = container.querySelectorAll<HTMLElement>('[data-message-id]')
-  for (const row of rows) {
-    const messageId = row.dataset.messageId?.trim()
-    if (!messageId) continue
-    const rowRect = row.getBoundingClientRect()
-    if (rowRect.bottom >= containerRect.top) {
-      return {
-        messageId,
-        offsetFromViewportTop: rowRect.top - containerRect.top,
-      }
-    }
-  }
-  return null
-}
-
 function messageIdSelector(messageId: string): string {
   const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
     ? CSS.escape(messageId)
     : messageId.replace(/["\\]/g, '\\$&')
   return `[data-message-id="${escaped}"]`
-}
-
-function restoreAnchorPosition(container: HTMLElement, anchor: ScrollAnchor | null): boolean {
-  if (!anchor) return false
-  const target = container.querySelector<HTMLElement>(messageIdSelector(anchor.messageId))
-  if (target) {
-    const containerRect = container.getBoundingClientRect()
-    const targetRect = target.getBoundingClientRect()
-    const delta = (targetRect.top - containerRect.top) - anchor.offsetFromViewportTop
-    if (Math.abs(delta) < 0.5) return true
-    container.scrollTop += delta
-    return true
-  }
-
-  if (!messageTimeline.value?.restoreAnchor(anchor.messageId, anchor.offsetFromViewportTop)) return false
-  return true
 }
 
 async function scrollMessageIntoView(messageId: string) {
@@ -1412,22 +1389,21 @@ async function scrollMessageIntoView(messageId: string) {
   target.scrollIntoView({ block: 'center' })
 }
 
-watch(() => {
-  const list = messages.value
-  const last = list[list.length - 1]
-  return `${chatStore.activeChannelId}|${list.length}|${last?.id ?? ''}`
-}, async () => {
-  const shouldStick = isNearBottom()
-  const list = messages.value
-  const lastId = list[list.length - 1]?.id ?? ''
-  if (!shouldStick && !forceScrollToBottomOnNextRender.value && lastId && lastId !== previousLastMessageId) {
-    unreadWhileScrolledAway.value += 1
+watch(() => ({
+  conversationId: chatStore.activeChannelId,
+  items: messages.value.map(message => ({ id: message.id, seq: message.channelSeq, senderId: message.senderId })),
+}), async (current, previous) => {
+  if (current.conversationId === previous.conversationId && previous.items.length > 0
+    && !isNearBottom() && !forceScrollToBottomOnNextRender.value) {
+    const previousIds = new Set(previous.items.map(message => message.id))
+    const previousTailSeq = previous.items.reduce((seq, message) => message.seq > seq ? message.seq : seq, 0n)
+    const selfUserId = authStore.user?.id || chatStore.workspace?.selfUserId || ''
+    unreadWhileScrolledAway.value += current.items.filter(message =>
+      !previousIds.has(message.id) && message.seq > previousTailSeq && message.senderId !== selfUserId
+    ).length
   }
-  previousLastMessageId = lastId
   await nextTick()
-  if ((shouldStick || forceScrollToBottomOnNextRender.value) && !loadingOlderHistory.value) {
-    scrollToBottom()
-  }
+  if (current.conversationId !== chatStore.activeChannelId) return
   const probe = openRenderProbe.value
   if (DEBUG_CHAT_COMPOSER_SCROLL && probe && probe.conversationId === chatStore.activeChannelId) {
     openRenderProbe.value = null
@@ -1453,7 +1429,6 @@ watch(() => chatStore.activeChannelId, async (conversationId) => {
   composerBottomStickArmed.value = true
   isAtBottom.value = true
   unreadWhileScrolledAway.value = 0
-  previousLastMessageId = ''
   pendingSwitchAutoScrollConversationId.value = conversationId
   topPreloadArmed.value = true
   remoteActiveCallMembersRequestSeq += 1

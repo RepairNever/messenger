@@ -790,34 +790,42 @@ func (s *Service) ExpireInvites(ctx context.Context) (ExpireInvitesResult, error
 	}
 	defer rows.Close()
 
-	directDeliveries := make([]DirectDelivery, 0)
-	expiredCount := 0
+	type expiredInvite struct {
+		inviteID, channelID, inviteeID uuid.UUID
+	}
+	expired := make([]expiredInvite, 0)
 	for rows.Next() {
-		expiredCount++
-		var inviteID, channelID, inviteeID uuid.UUID
-		if err := rows.Scan(&inviteID, &channelID, &inviteeID); err != nil {
+		var invite expiredInvite
+		if err := rows.Scan(&invite.inviteID, &invite.channelID, &invite.inviteeID); err != nil {
 			return ExpireInvitesResult{}, fmt.Errorf("calls.ExpireInvites scan: %w", err)
 		}
+		expired = append(expired, invite)
+	}
+	if err := rows.Err(); err != nil {
+		return ExpireInvitesResult{}, fmt.Errorf("calls.ExpireInvites rows: %w", err)
+	}
+	// A pgx transaction owns one connection. Release the returning rows before
+	// resolving notifications on that connection.
+	rows.Close()
 
-		resolved, err := s.resolveInviteNotificationTx(ctx, tx, channelID, inviteeID)
+	directDeliveries := make([]DirectDelivery, 0, len(expired)*2)
+	for _, invite := range expired {
+		resolved, err := s.resolveInviteNotificationTx(ctx, tx, invite.channelID, invite.inviteeID)
 		if err != nil {
 			return ExpireInvitesResult{}, err
 		}
 		directDeliveries = append(directDeliveries, resolved...)
 		directDeliveries = append(directDeliveries, DirectDelivery{
-			UserID: inviteeID.String(),
-			Event:  s.buildCallInviteCancelledEvent(inviteID.String(), packetspb.InviteCancelReason_INVITE_CANCEL_REASON_EXPIRED, uuid.Nil),
+			UserID: invite.inviteeID.String(),
+			Event:  s.buildCallInviteCancelledEvent(invite.inviteID.String(), packetspb.InviteCancelReason_INVITE_CANCEL_REASON_EXPIRED, uuid.Nil),
 		})
-	}
-	if err := rows.Err(); err != nil {
-		return ExpireInvitesResult{}, fmt.Errorf("calls.ExpireInvites rows: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return ExpireInvitesResult{}, fmt.Errorf("calls.ExpireInvites commit: %w", err)
 	}
 
-	return ExpireInvitesResult{ExpiredCount: expiredCount, DirectDeliveries: directDeliveries}, nil
+	return ExpireInvitesResult{ExpiredCount: len(expired), DirectDeliveries: directDeliveries}, nil
 }
 
 func (s *Service) HandleWebhook(ctx context.Context, evt *lkwebhookEvent) (bool, error) {

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { create, type MessageInitShape } from '@bufbuild/protobuf'
 import { nextTick, watch } from 'vue'
-import { useChatStore, type Message } from '@/stores/chat'
+import { useChatStore, encryptedDMPayloadsFromEnvelopes, type Message } from '@/stores/chat'
 import { useWsStore } from '@/stores/ws'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -184,6 +184,16 @@ function buildReadCounterEvent(counter: MessageInitShape<typeof UnreadCounterSch
       value: create(ReadCounterUpdatedEventSchema, { counter: create(UnreadCounterSchema, counter) }),
     },
   })
+}
+
+async function openLoadedDM(page = buildRootHistoryPage('dm-1', 10n)) {
+  const chat = useChatStore()
+  chat.bootstrapped = true
+  chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'online', unread: 0, notificationLevel: NotificationLevel.ALL }]
+  useWsStore().sendUpdateReadCursor = vi.fn().mockReturnValue(true)
+  chatApiMocks.listConversationMessages.mockResolvedValueOnce(page)
+  await chat.selectChannel('dm-1')
+  return chat
 }
 
 function buildUnreadThreadItem(overrides: Record<string, unknown> = {}) {
@@ -1635,6 +1645,90 @@ describe('chatStore phase 6 flows', () => {
     expect(chat.directMessages[0].unread).toBe(0)
     expect(chat.activeChannelId).toBe('dm-1')
     expect(chatApiMocks.listConversationMessages).toHaveBeenCalledTimes(3)
+  })
+
+  it('recovers incoming DM history without an opening overlay, replacing existing rows, or requesting composer focus', async () => {
+    const page = buildRootHistoryPage('dm-1', 10n)
+    const chat = await openLoadedDM(page)
+    const previousList = chat.messages['dm-1']
+    const previousMessage = previousList[0]
+    const focusToken = chat.conversationComposerFocusToken
+    let resolveHistory!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    chatApiMocks.listConversationMessages.mockReturnValueOnce(new Promise(resolve => { resolveHistory = resolve }))
+
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, revision: 1n, lastReadSeq: 10n, lastRootMessageSeq: 11n }))
+
+    expect(chat.isConversationInitialLoading('dm-1')).toBe(false)
+    expect(chat.conversationHistorySyncStatus('dm-1')).toBe('syncing')
+    expect(chat.messages['dm-1']).toBe(previousList)
+    resolveHistory({ ...page, messages: [...page.messages, ...buildRootHistoryPage('dm-1', 11n).messages] })
+    await vi.waitFor(() => expect(chat.conversationHistorySyncStatus('dm-1')).toBe('idle'))
+
+    expect(chat.messages['dm-1'][0]).toBe(previousMessage)
+    expect(chat.messages['dm-1'].map(message => message.id)).toEqual(['root-10', 'root-11'])
+    expect(chat.conversationComposerFocusToken).toBe(focusToken)
+  })
+
+  it('keeps loaded content after recovery fails and retries without reopening the conversation', async () => {
+    const chat = await openLoadedDM()
+    const previousMessage = chat.messages['dm-1'][0]
+    const focusToken = chat.conversationComposerFocusToken
+    chatApiMocks.listConversationMessages.mockRejectedValueOnce(new Error('offline'))
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, revision: 1n, lastReadSeq: 10n, lastRootMessageSeq: 11n }))
+    await vi.waitFor(() => expect(chat.conversationHistorySyncStatus('dm-1')).toBe('error'))
+    expect(chat.messages['dm-1'][0]).toBe(previousMessage)
+    expect(chat.isConversationInitialLoading('dm-1')).toBe(false)
+    expect(chat.directMessages[0].unread).toBe(1)
+
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(buildRootHistoryPage('dm-1', 11n))
+    await chat.retryConversationHistory('dm-1')
+    expect(chat.conversationHistorySyncStatus('dm-1')).toBe('idle')
+    expect(chat.messages['dm-1'][0]).toBe(previousMessage)
+    expect(chat.messages['dm-1'][1].id).toBe('root-11')
+    expect(chat.conversationComposerFocusToken).toBe(focusToken)
+    expect(chat.activeChannelId).toBe('dm-1')
+  })
+
+  it('does not show the opening overlay when the first message arrives in an already loaded empty DM', async () => {
+    const chat = await openLoadedDM({ ...buildRootHistoryPage('dm-1', 0n), messages: [] })
+    let resolveHistory!: (page: ReturnType<typeof buildRootHistoryPage>) => void
+    chatApiMocks.listConversationMessages.mockReturnValueOnce(new Promise(resolve => { resolveHistory = resolve }))
+    chat.handleServerEvent(buildReadCounterEvent({ conversationId: 'dm-1', unreadMessages: 1, revision: 1n, lastRootMessageSeq: 1n }))
+    expect(chat.isConversationInitialLoading('dm-1')).toBe(false)
+    expect(chat.conversationHistorySyncStatus('dm-1')).toBe('syncing')
+    resolveHistory(buildRootHistoryPage('dm-1', 1n))
+    await vi.waitFor(() => expect(chat.conversationHistorySyncStatus('dm-1')).toBe('idle'))
+  })
+
+  it('retains unchanged history references while still applying edits and reaction changes', async () => {
+    const page = buildRootHistoryPage('dm-1', 10n)
+    const chat = await openLoadedDM(page)
+    const previousList = chat.messages['dm-1']
+    const previousMessage = previousList[0]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(structuredClone(page))
+    await chat.retryConversationHistory('dm-1')
+    expect(chat.messages['dm-1']).toBe(previousList)
+    expect(chat.messages['dm-1'][0]).toBe(previousMessage)
+
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce({
+      ...page, messages: [{ ...page.messages[0], body: 'Edited', edited_at: '2026-10-23T10:00:00Z', reactions: [{ emoji: '👍', count: 1 }] }],
+    })
+    await chat.retryConversationHistory('dm-1')
+    expect(chat.messages['dm-1'][0].body).toBe('Edited')
+    expect(chat.messages['dm-1'][0].reactions).toEqual([{ emoji: '👍', count: 1 }])
+  })
+
+  it('does not let an obsolete failed request change the new conversation sync status', async () => {
+    const chat = await openLoadedDM()
+    let rejectOld!: (error: Error) => void
+    chatApiMocks.listConversationMessages.mockReturnValueOnce(new Promise((_, reject) => { rejectOld = reject }))
+    const oldRequest = chat.retryConversationHistory('dm-1')
+    chat.resetRuntimeState()
+    await openLoadedDM()
+    rejectOld(new Error('old request failed'))
+    await oldRequest
+    expect(chat.conversationHistorySyncStatus('dm-1')).toBe('idle')
+    expect(chat.isConversationInitialLoading('dm-1')).toBe(false)
   })
 
   it('retries a loaded visible read once when a newer counter still has an older confirmed cursor', async () => {
@@ -5589,6 +5683,102 @@ describe('chatStore phase 6 flows', () => {
     expect(chat.messages['dm-1'][0].body).toBe('decrypted history message')
     expect(observedBodies).toContain('decrypted history message')
     stopWatchingBody()
+  })
+
+  it('preserves decrypted history while refreshing unchanged encrypted messages', async () => {
+    const page = {
+      ...buildRootHistoryPage('dm-1', 10n),
+      messages: [{
+        ...buildRootHistoryPage('dm-1', 10n).messages[0],
+        content_mode: 'dm_pairwise_signal_v1',
+        encrypted_dm_payloads: [{ recipient_device_id: 'local', sender_device_id: 'remote', algorithm: 'test', session_message: 'ciphertext', metadata_aad: 'aad' }],
+      }],
+    }
+    e2eeMocks.decryptDMMessage.mockResolvedValueOnce('already decrypted')
+    const chat = await openLoadedDM(page)
+    const previousMessage = chat.messages['dm-1'][0]
+    const observedBodies: string[] = []
+    const stop = watch(() => chat.messages['dm-1'][0]?.body, body => observedBodies.push(body), { flush: 'sync' })
+
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce(structuredClone(page))
+    await chat.retryConversationHistory('dm-1')
+
+    expect(chat.messages['dm-1'][0]).toBe(previousMessage)
+    expect(chat.messages['dm-1'][0].body).toBe('already decrypted')
+    expect(observedBodies).toEqual([])
+    expect(e2eeMocks.decryptDMMessage).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
+  it('decrypts changed ciphertext and rejects an older decryption that finishes during refresh', async () => {
+    const payload = { recipient_device_id: 'local', sender_device_id: 'remote', algorithm: 'test', session_message: 'old', metadata_aad: 'aad' }
+    const page = {
+      ...buildRootHistoryPage('dm-1', 10n),
+      messages: [{ ...buildRootHistoryPage('dm-1', 10n).messages[0], content_mode: 'dm_pairwise_signal_v1', encrypted_dm_payloads: [payload] }],
+    }
+    let finishOld!: (body: string) => void
+    let finishNew!: (body: string) => void
+    e2eeMocks.decryptDMMessage
+      .mockReturnValueOnce(new Promise(resolve => { finishOld = resolve }))
+      .mockReturnValueOnce(new Promise(resolve => { finishNew = resolve }))
+    const chat = await openLoadedDM(page)
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce({
+      ...page, messages: [{ ...page.messages[0], encrypted_dm_payloads: [{ ...payload, session_message: 'new' }] }],
+    })
+    await chat.retryConversationHistory('dm-1')
+    finishOld('obsolete plaintext')
+    await nextTick()
+    expect(chat.messages['dm-1'][0].body).toBe('Decrypting encrypted message...')
+    finishNew('current plaintext')
+    await nextTick()
+    expect(chat.messages['dm-1'][0].body).toBe('current plaintext')
+  })
+
+  it('preserves a decrypted multi-device live message when history returns only this device', async () => {
+    localStorage.setItem('msgnr:e2ee:dm-device:v1', JSON.stringify({ deviceId: 'local', publicKeyJwk: {}, privateKeyJwk: {} }))
+    const chat = await openLoadedDM()
+    e2eeMocks.decryptDMMessage.mockResolvedValueOnce('live plaintext')
+    chat.handleServerEvent(create(ServerEventSchema, {
+      eventSeq: 1n, eventId: 'encrypted-live',
+      payload: { case: 'messageCreated', value: create(MessageEventSchema, {
+        conversationId: 'dm-1', messageId: 'root-11', senderId: 'user-2', channelSeq: 11n,
+        contentMode: MessageContentMode.DM_PAIRWISE_SIGNAL_V1,
+        encryptedDmPayload: { recipients: [
+          { recipientDeviceId: 'local', senderDeviceId: 'remote', algorithm: 'test', sessionMessage: new Uint8Array([1, 2]), metadataAad: new Uint8Array([3]) },
+          { recipientDeviceId: 'second-device', senderDeviceId: 'remote', algorithm: 'test', sessionMessage: new Uint8Array([4, 5]), metadataAad: new Uint8Array([6]) },
+        ] },
+      }) },
+    }))
+    await nextTick()
+    const liveMessage = chat.messages['dm-1'][1]
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce({
+      ...buildRootHistoryPage('dm-1', 11n),
+      messages: [{ ...buildRootHistoryPage('dm-1', 11n).messages[0], content_mode: 'dm_pairwise_signal_v1', encrypted_dm_payloads: liveMessage.encryptedDMPayloads?.filter(payload => payload.recipient_device_id === 'local') }],
+    })
+    await chat.retryConversationHistory('dm-1')
+    expect(chat.messages['dm-1'][1].body).toBe('live plaintext')
+    expect(e2eeMocks.decryptDMMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps an acknowledged encrypted outgoing message readable during later incoming-message recovery', async () => {
+    localStorage.setItem('msgnr:e2ee:dm-device:v1', JSON.stringify({ deviceId: 'local', publicKeyJwk: {}, privateKeyJwk: {} }))
+    const chat = await openLoadedDM()
+    const payloads = encryptedDMPayloadsFromEnvelopes([
+      { recipientDeviceId: 'local', senderDeviceId: 'local', algorithm: 'test', sessionMessage: new Uint8Array([1, 2]), metadataAad: new Uint8Array([3]) },
+    ])
+    chat.addOptimisticMessage(buildMessage({
+      id: 'client-11', clientMsgId: 'client-11', channelId: 'dm-1', channelSeq: 0n,
+      senderId: 'user-1', contentMode: 'dm_pairwise_signal_v1', senderDeviceId: 'local',
+      body: 'My sent reply', encryptedDMPayloads: payloads, sendStatus: 'sending',
+    }))
+    chat.reconcileMessage('dm-1', 'client-11', create(SendMessageAckSchema, { messageId: 'root-11', channelSeq: 11n }))
+    chatApiMocks.listConversationMessages.mockResolvedValueOnce({
+      ...buildRootHistoryPage('dm-1', 11n),
+      messages: [{ ...buildRootHistoryPage('dm-1', 11n).messages[0], sender_id: 'user-1', content_mode: 'dm_pairwise_signal_v1', sender_device_id: 'local', encrypted_dm_payloads: payloads }],
+    })
+    await chat.retryConversationHistory('dm-1')
+    expect(chat.messages['dm-1'][1].body).toBe('My sent reply')
+    expect(e2eeMocks.decryptDMMessage).not.toHaveBeenCalled()
   })
 
   it('reactively applies a decrypted live encrypted-DM message without reopening the conversation', async () => {

@@ -56,6 +56,7 @@ const props = withDefaults(
     rowGap?: number
     bottomStickThreshold?: number
     keepRenderedIds?: Array<string | number>
+    manageItemScroll?: boolean
   }>(),
   {
     estimatedRowHeight: 96,
@@ -63,6 +64,7 @@ const props = withDefaults(
     rowGap: 0,
     bottomStickThreshold: 72,
     keepRenderedIds: () => [],
+    manageItemScroll: false,
   },
 )
 
@@ -134,8 +136,7 @@ function syncStaticHeight(): boolean {
   return true
 }
 
-function findEntryAtOffset(offset: number): VirtualTimelineEntry<T> | undefined {
-  const entries = layout.value.entries
+function findEntryAtOffset(offset: number, entries = layout.value.entries): VirtualTimelineEntry<T> | undefined {
   let low = 0
   let high = entries.length - 1
 
@@ -226,7 +227,7 @@ function isNearBottom(container: HTMLElement): boolean {
   return container.scrollHeight - (container.scrollTop + container.clientHeight) <= props.bottomStickThreshold
 }
 
-function captureTimelineAnchor(): TimelineScrollAnchor | null {
+function captureTimelineAnchor(previousLayout = layout.value): TimelineScrollAnchor | null {
   const container = props.scrollContainer
   if (!container) return null
   if (isNearBottom(container)) return { kind: 'bottom' }
@@ -234,7 +235,7 @@ function captureTimelineAnchor(): TimelineScrollAnchor | null {
   const timelineTop = container.scrollTop - beforeHeight.value
   if (timelineTop < 0) return { kind: 'static', scrollTop: container.scrollTop }
 
-  const entry = findEntryAtOffset(timelineTop)
+  const entry = findEntryAtOffset(timelineTop, previousLayout.entries)
   if (!entry) return { kind: 'static', scrollTop: container.scrollTop }
   return {
     kind: 'entry',
@@ -358,6 +359,18 @@ watch(
   () => props.scrollContainer,
   (container) => attachScrollContainer(container),
   { immediate: true },
+)
+
+watch(
+  layout,
+  (current, previous) => {
+    if (!props.manageItemScroll) return
+    if (current.entries.length === previous.entries.length
+      && current.entries.every((entry, index) => entry.id === previous.entries[index].id)) return
+    // The old layout still describes what the reader sees before Vue patches
+    // the rows. Use the same correction queue as asynchronous row measurement.
+    queueLayoutCorrection(captureTimelineAnchor(previous))
+  },
 )
 
 watch(

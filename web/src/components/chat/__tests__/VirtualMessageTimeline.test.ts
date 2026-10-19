@@ -65,6 +65,7 @@ function mountTimeline(items: TimelineItem[], pinnedIds: string[] = [], withBefo
           :items="timelineItems"
           :scroll-container="scrollEl"
           :keep-rendered-ids="pinned"
+          manage-item-scroll
         >
           <template v-if="${withBefore}" #before>
             <div data-testid="timeline-before">Thread root</div>
@@ -249,5 +250,60 @@ describe('VirtualMessageTimeline', () => {
     await flushTimelineLayout()
 
     expect(observer.observe).toHaveBeenCalledTimes(observedCount)
+  })
+
+  it('anchors incoming batches at the bottom using the layout before the append', async () => {
+    const wrapper = mountTimeline(buildItems(0, 200))
+    const scroll = wrapper.get('[data-testid="scroll"]').element as HTMLDivElement
+    const metrics = installScrollMetrics(scroll, 200 * 96)
+    scroll.scrollTop = 200 * 96 - 400
+    scroll.dispatchEvent(new Event('scroll'))
+    await flushTimelineLayout()
+
+    const host = wrapper.vm as unknown as { timelineItems: TimelineItem[] }
+    host.timelineItems.push(...buildItems(200, 3))
+    // Vue patches the total height after the pre-render anchor is captured.
+    await nextTick()
+    metrics.setScrollHeight(203 * 96)
+    await flushTimelineLayout()
+    expect(scroll.scrollTop).toBe(203 * 96)
+    wrapper.unmount()
+  })
+
+  it('preserves the visible message across background gap fills, appends, and row measurement', async () => {
+    const wrapper = mountTimeline(buildItems(20, 200))
+    const scroll = wrapper.get('[data-testid="scroll"]').element as HTMLDivElement
+    installScrollMetrics(scroll, 200 * 96)
+    scroll.scrollTop = 100 * 96 + 20
+    scroll.dispatchEvent(new Event('scroll'))
+    await flushTimelineLayout()
+
+    const host = wrapper.vm as unknown as { timelineItems: TimelineItem[] }
+    host.timelineItems = [...buildItems(10, 10), ...host.timelineItems, ...buildItems(220, 3)]
+    await flushTimelineLayout()
+    expect(scroll.scrollTop).toBe(110 * 96 + 20)
+
+    const row = wrapper.get('[data-testid="row-message-115"]').element.parentElement!
+    rowResizeObserver().trigger([{ target: row, height: 160 }])
+    await flushTimelineLayout()
+    expect(scroll.scrollTop).toBe(110 * 96 + 20 + 64)
+    wrapper.unmount()
+  })
+
+  it('retains the same mounted row when an incoming message crosses the virtualization threshold', async () => {
+    const wrapper = mountTimeline(buildItems(0, 80))
+    const scroll = wrapper.get('[data-testid="scroll"]').element as HTMLDivElement
+    installScrollMetrics(scroll, 80 * 96)
+    scroll.scrollTop = 40 * 96 + 20
+    scroll.dispatchEvent(new Event('scroll'))
+    await flushTimelineLayout()
+    const previousRow = wrapper.get('[data-testid="row-message-40"]').element
+
+    const host = wrapper.vm as unknown as { timelineItems: TimelineItem[] }
+    host.timelineItems.push(...buildItems(80, 1))
+    await flushTimelineLayout()
+    expect(scroll.scrollTop).toBe(40 * 96 + 20)
+    expect(wrapper.get('[data-testid="row-message-40"]').element).toBe(previousRow)
+    wrapper.unmount()
   })
 })

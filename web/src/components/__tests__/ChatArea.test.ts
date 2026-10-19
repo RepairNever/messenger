@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { nextTick } from 'vue'
+import { nextTick, ref } from 'vue'
 import { NotificationLevel } from '@/shared/proto/packets_pb'
 import ChatArea from '@/components/ChatArea.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -10,6 +10,7 @@ import { useCallStore } from '@/stores/call'
 import { usePinnedDialogsStore } from '@/stores/pinnedDialogs'
 import { useWsStore } from '@/stores/ws'
 import { useOfflineQueue } from '@/composables/useOfflineQueue'
+import * as dmE2ee from '@/services/e2ee/dmE2ee'
 
 const cacheMocks = vi.hoisted(() => ({
   cacheConversations: vi.fn().mockResolvedValue(undefined),
@@ -860,6 +861,153 @@ describe('ChatArea', () => {
     expect(wrapper.find('[data-testid="conversation-loading-overlay"]').exists()).toBe(true)
   })
 
+  it('keeps short recovery silent and shows nonblocking status with retry for slow or failed recovery', async () => {
+    vi.useFakeTimers()
+    const chat = useChatStore()
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'online', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chat.activeChannelId = 'dm-1'
+    chat.messages = { 'dm-1': [buildMessage({ channelId: 'dm-1' })] }
+    const status = ref<'idle' | 'syncing' | 'error'>('idle')
+    chat.conversationHistorySyncStatus = vi.fn(() => status.value)
+    chat.retryConversationHistory = vi.fn().mockResolvedValue(undefined)
+    const wrapper = mount(ChatArea, { global: { stubs: { MessageBubble: true, MessageInput: true } } })
+
+    status.value = 'syncing'
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(900)
+    expect(wrapper.find('[data-testid="conversation-loading-overlay"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="conversation-sync-status"]').exists()).toBe(false)
+    status.value = 'idle'
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(wrapper.find('[data-testid="conversation-sync-status"]').exists()).toBe(false)
+
+    status.value = 'syncing'
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(wrapper.get('[data-testid="conversation-sync-status"]').text()).toBe('Syncing…')
+    status.value = 'error'
+    await nextTick()
+    expect(wrapper.get('[data-testid="conversation-sync-status"]').text()).toContain("Couldn't sync")
+    await wrapper.get('[data-testid="conversation-sync-retry"]').trigger('click')
+    expect(chat.retryConversationHistory).toHaveBeenCalledWith('dm-1')
+    expect(wrapper.find('[data-message-id="message-1"]').exists()).toBe(true)
+    status.value = 'idle'
+    await nextTick()
+    expect(wrapper.find('[data-testid="conversation-sync-status"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('retains encrypted send envelopes on the visible outgoing message for later history reconciliation', async () => {
+    const encrypt = vi.spyOn(dmE2ee, 'encryptDMMessage').mockResolvedValue({
+      senderDeviceId: 'local',
+      envelopes: [{ recipientDeviceId: 'local', senderDeviceId: 'local', algorithm: 'test', sessionMessage: new Uint8Array([1, 2]), metadataAad: new Uint8Array([3]) }],
+    })
+    const ensureDevice = vi.spyOn(dmE2ee, 'ensureEncryptedDMDevice').mockResolvedValue({ deviceId: 'local', publicKeyJwk: {}, privateKeyJwk: {} })
+    const chat = useChatStore()
+    chat.workspace = { id: 'workspace', name: 'Test', selfUserId: 'user-1', selfDisplayName: 'Ada', selfAvatarUrl: '', selfRole: 'member' }
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'online', unread: 0, notificationLevel: NotificationLevel.ALL, encryptionMode: 'dm_pairwise_signal_v1' }]
+    chat.activeChannelId = 'dm-1'
+    chat.messages = { 'dm-1': [] }
+    chat.startSendTimeout = vi.fn()
+    useWsStore().state = 'LIVE_SYNCED'
+    useWsStore().sendMessage = vi.fn().mockReturnValue(true)
+    const wrapper = mount(ChatArea, {
+      global: { stubs: { MessageBubble: true, MessageInput: { template: '<button data-testid="send-encrypted" @click="$emit(\'send\', \'My reply\')">Send</button>' } } },
+    })
+    try {
+      await wrapper.get('[data-testid="send-encrypted"]').trigger('click')
+      await flushAll()
+      expect(chat.messages['dm-1'][0]).toMatchObject({
+        body: 'My reply', contentMode: 'dm_pairwise_signal_v1', senderDeviceId: 'local',
+        encryptedDMPayloads: [{ recipient_device_id: 'local', sender_device_id: 'local', algorithm: 'test', session_message: 'AQI=', metadata_aad: 'Aw==' }],
+      })
+    } finally {
+      wrapper.unmount()
+      encrypt.mockRestore()
+      ensureDevice.mockRestore()
+    }
+  })
+
+  it('does not flash a loading overlay or remount the composer when messages arrive during typing', async () => {
+    const chat = useChatStore()
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'online', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chat.activeChannelId = 'dm-1'
+    chat.messages = { 'dm-1': [buildMessage({ channelId: 'dm-1' })] }
+    chat.isConversationInitialLoading = vi.fn().mockReturnValue(true)
+    const wrapper = mount(ChatArea, {
+      attachTo: document.body,
+      global: { stubs: { MessageBubble: true, MessageInput: { template: '<textarea data-testid="draft" />' } } },
+    })
+    const textarea = wrapper.get('[data-testid="draft"]').element as HTMLTextAreaElement
+    textarea.value = 'My unfinished reply'
+    textarea.focus()
+    textarea.setSelectionRange(3, 7)
+    const firstRow = wrapper.get('[data-message-id="message-1"]').element
+    chat.messages['dm-1'].push(buildMessage({ id: 'message-2', channelId: 'dm-1', channelSeq: 2n, senderId: 'user-2' }))
+    await flushAll()
+
+    expect(wrapper.find('[data-testid="conversation-loading-overlay"]').exists()).toBe(false)
+    expect(wrapper.get('[data-message-id="message-1"]').element).toBe(firstRow)
+    expect(wrapper.get('[data-testid="draft"]').element).toBe(textarea)
+    expect(document.activeElement).toBe(textarea)
+    expect(textarea.value).toBe('My unfinished reply')
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([3, 7])
+    wrapper.unmount()
+  })
+
+  it('follows the first long incoming message in an already-open empty DM', async () => {
+    const chat = useChatStore()
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'online', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chat.activeChannelId = 'dm-1'
+    chat.messages = { 'dm-1': [] }
+    const wrapper = mount(ChatArea, { global: { stubs: { MessageBubble: true, MessageInput: true } } })
+    const scroll = wrapper.find('.overflow-y-auto').element as HTMLDivElement
+    let height = 500
+    Object.defineProperty(scroll, 'scrollHeight', { get: () => height, configurable: true })
+    Object.defineProperty(scroll, 'clientHeight', { value: 500, configurable: true })
+    await flushFrames()
+    scroll.scrollTop = 0
+
+    chat.messages['dm-1'].push(buildMessage({ id: 'message-1', channelId: 'dm-1', senderId: 'user-2', body: 'A long message\n'.repeat(100) }))
+    await nextTick()
+    height = 1200
+    await flushAll()
+    expect(scroll.scrollTop).toBe(1200)
+    expect(wrapper.find('[data-testid="conversation-loading-overlay"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('counts all new remote messages in a batch without counting prepends, duplicates, or own messages', async () => {
+    const chat = useChatStore()
+    chat.activeChannelId = 'dm-1'
+    chat.workspace = { id: 'workspace', name: 'Test', selfUserId: 'user-1', selfDisplayName: 'Ada', selfAvatarUrl: '', selfRole: 'member' }
+    chat.directMessages = [{ id: 'dm-1', userId: 'user-2', displayName: 'Bob', presence: 'online', unread: 0, notificationLevel: NotificationLevel.ALL }]
+    chat.messages = { 'dm-1': [buildMessage({ id: 'message-10', channelId: 'dm-1', channelSeq: 10n })] }
+    const wrapper = mount(ChatArea, { global: { stubs: { MessageBubble: true, MessageInput: true } } })
+    const scroll = wrapper.find('.overflow-y-auto').element as HTMLDivElement
+    Object.defineProperty(scroll, 'scrollHeight', { value: 1800, configurable: true })
+    Object.defineProperty(scroll, 'clientHeight', { value: 500, configurable: true })
+    scroll.scrollTop = 300
+    await wrapper.find('.overflow-y-auto').trigger('scroll')
+    chat.messages['dm-1'] = [
+      buildMessage({ id: 'message-9', channelId: 'dm-1', channelSeq: 9n, senderId: 'user-2' }),
+      ...chat.messages['dm-1'],
+      ...[11, 12, 13].map(seq => buildMessage({ id: `message-${seq}`, channelId: 'dm-1', channelSeq: BigInt(seq), senderId: 'user-2' })),
+      buildMessage({ id: 'message-14', channelId: 'dm-1', channelSeq: 14n, senderId: 'user-1' }),
+    ]
+    await flushAll()
+    expect(wrapper.get('[data-testid="scroll-to-bottom-btn"]').text()).toContain('3 new messages')
+    expect(scroll.scrollTop).toBe(396)
+    chat.messages['dm-1'] = [...chat.messages['dm-1']]
+    await flushAll()
+    expect(wrapper.get('[data-testid="scroll-to-bottom-btn"]').text()).toContain('3 new messages')
+    await wrapper.get('[data-testid="scroll-to-bottom-btn"]').trigger('click')
+    expect(scroll.scrollTop).toBe(1800)
+    expect(wrapper.get('[data-testid="scroll-to-bottom-btn"]').text()).not.toContain('new messages')
+    wrapper.unmount()
+  })
+
   it('does not force-scroll to bottom when user is reading older history', async () => {
     const chatStore = useChatStore()
     const wsStore = useWsStore()
@@ -1042,58 +1190,25 @@ describe('ChatArea', () => {
         buildMessage({ id: 'message-2', channelSeq: 2n }),
       ],
     }
-    let layoutPhase: 'before' | 'after' = 'before'
     chatStore.loadOlderConversationHistory = vi.fn().mockImplementation(async () => {
-      chatStore.messages = {
-        'channel-1': [
-          buildMessage({ id: 'message-0', channelSeq: 0n }),
-          ...chatStore.messages['channel-1'],
-        ],
-      }
-      layoutPhase = 'after'
+      chatStore.messages['channel-1'].unshift(buildMessage({ id: 'message-0', channelSeq: 0n }))
       return 1
     })
-    const originalRect = HTMLElement.prototype.getBoundingClientRect
-    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
-      const messageId = (this as HTMLElement).dataset?.messageId
-      if (messageId === 'message-1') {
-        return {
-          top: layoutPhase === 'before' ? 20 : 180,
-          bottom: layoutPhase === 'before' ? 80 : 240,
-          left: 0,
-          right: 300,
-          width: 300,
-          height: 60,
-          x: 0,
-          y: layoutPhase === 'before' ? 20 : 180,
-          toJSON: () => ({}),
-        } as DOMRect
-      }
-      return originalRect.call(this)
-    }
+    const wrapper = mount(ChatArea, {
+      global: { stubs: { MessageBubble: true, MessageInput: true } },
+    })
+    const el = wrapper.find('.overflow-y-auto').element as HTMLDivElement
+    Object.defineProperty(el, 'scrollHeight', { value: 1600, configurable: true })
+    Object.defineProperty(el, 'clientHeight', { value: 600, configurable: true })
+    el.scrollTop = 40
 
-    try {
-      const wrapper = mount(ChatArea, {
-        global: {
-          stubs: {
-            MessageBubble: true,
-            MessageInput: true,
-          },
-        },
-      })
+    await wrapper.find('.overflow-y-auto').trigger('scroll')
+    await flushAll()
 
-      const el = wrapper.find('.overflow-y-auto').element as HTMLDivElement
-      Object.defineProperty(el, 'scrollHeight', { value: 1600, configurable: true })
-      Object.defineProperty(el, 'clientHeight', { value: 600, configurable: true })
-      el.scrollTop = 40
-
-      await wrapper.find('.overflow-y-auto').trigger('scroll')
-      await flushAll()
-
-      expect(el.scrollTop).toBe(200)
-    } finally {
-      HTMLElement.prototype.getBoundingClientRect = originalRect
-    }
+    // Only the timeline compensates for the new estimated row (96px).
+    expect(el.scrollTop).toBe(136)
+    expect(wrapper.get('[data-testid="scroll-to-bottom-btn"]').text()).not.toContain('new message')
+    wrapper.unmount()
   })
 
   it('increments unread without moving scroll when a remote message arrives while scrolled away', async () => {

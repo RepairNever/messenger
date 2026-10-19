@@ -20,6 +20,12 @@ let captureTeardownSeq = 0
 const DISPLAY_CAPTURE_STOP_RETRY_MS = 250
 const DISPLAY_CAPTURE_STOP_MAX_RETRIES = 3
 
+class CallJoinCancelledError extends Error {
+  constructor() {
+    super('Call join cancelled')
+  }
+}
+
 function toErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
@@ -646,7 +652,10 @@ export const useCallStore = defineStore('call', () => {
   let emptyCallAutoCloseTimer: ReturnType<typeof setTimeout> | null = null
   let annotationMonitorPollTimer: ReturnType<typeof setInterval> | null = null
   let annotationMonitorPollInFlight = false
-  let audioProcessingCleanup: (() => void) | null = null
+  const audioProcessingCleanups = new WeakMap<Room, () => void>()
+  let callGeneration = 0
+  let joinAbortController: AbortController | null = null
+  let roomTeardown: Promise<void> = Promise.resolve()
   let knownRemoteParticipantSids = new Set<string>()
   let suppressParticipantChangeSounds = false
   let localScreenShareUsedInSession = false
@@ -810,6 +819,29 @@ export const useCallStore = defineStore('call', () => {
     pendingInviteMembersResolve = null
     pendingInviteMembersReject = null
     pendingInviteMembersRequestId = ''
+  }
+
+  function cancelPendingCallOperations() {
+    callGeneration += 1
+    joinAbortController?.abort(new CallJoinCancelledError())
+    joinAbortController = null
+    const rejectCreate = pendingCreateCallReject
+    const rejectJoin = pendingJoinReject
+    const rejectInvite = pendingInviteMembersReject
+    clearPendingCreateCall()
+    clearPendingJoin()
+    clearPendingInviteMembers()
+    const error = new CallJoinCancelledError()
+    rejectCreate?.(error)
+    rejectJoin?.(error)
+    rejectInvite?.(error)
+    connecting.value = false
+  }
+
+  function stopAudioProcessing(current: Room) {
+    const cleanup = audioProcessingCleanups.get(current)
+    audioProcessingCleanups.delete(current)
+    cleanup?.()
   }
 
   function stopRemoteAudioStatsLoop() {
@@ -1660,11 +1692,14 @@ export const useCallStore = defineStore('call', () => {
   // The RNNoise blob URL is cached at module scope via getRnnoiseBlobUrl() so
   // the JS files are only downloaded once per page load.
   //
-  // Returns a cleanup function that tears down the AudioContext on call leave.
+  // Register cleanup before the first await so disconnect also owns resources
+  // created by processing initialization that has not finished yet.
   async function applyAudioProcessing(
+    owner: Room,
     publication: LocalAudioTrack,
     prefs: { autoGainControl: boolean; microphoneGain: number; rnnoiseEnabled: boolean },
-  ): Promise<() => void> {
+    signal?: AbortSignal,
+  ): Promise<void> {
     // Always read _mediaStreamTrack directly (not via the .mediaStreamTrack
     // getter) so we get the original raw capture track rather than any
     // previously replaced/processed track.
@@ -1675,11 +1710,31 @@ export const useCallStore = defineStore('call', () => {
 
     // If neither stage is needed, there is nothing to do.
     if (!applyGain && !prefs.rnnoiseEnabled) {
-      return () => {}
+      return
     }
 
     const ctx = new AudioContext()
+    let processedTrack: MediaStreamTrack | undefined
+    let disposed = false
+    const cleanup = (stopCapture = true) => {
+      if (disposed) return
+      disposed = true
+      signal?.removeEventListener('abort', onAbort)
+      if (audioProcessingCleanups.get(owner) === cleanup) {
+        audioProcessingCleanups.delete(owner)
+      }
+      processedTrack?.stop()
+      if (stopCapture) rawTrack.stop()
+      void ctx.close().catch(() => {})
+    }
+    const onAbort = () => cleanup()
+    const assertCurrent = () => {
+      if (disposed || signal?.aborted || room.value !== owner) throw new CallJoinCancelledError()
+    }
+    audioProcessingCleanups.set(owner, cleanup)
+    signal?.addEventListener('abort', onAbort, { once: true })
     try {
+      assertCurrent()
       const source = ctx.createMediaStreamSource(new MediaStream([rawTrack]))
       let current: AudioNode = source
 
@@ -1703,7 +1758,9 @@ export const useCallStore = defineStore('call', () => {
       // Stage 2 — RNNoise WASM noise suppression
       if (prefs.rnnoiseEnabled) {
         const blobUrl = await getRnnoiseBlobUrl()
+        assertCurrent()
         await ctx.audioWorklet.addModule(blobUrl)
+        assertCurrent()
         const workletNode = new AudioWorkletNode(ctx, 'rnnoise-processor', {
           ...monoNodeOptions,
           numberOfInputs: 1,
@@ -1722,58 +1779,57 @@ export const useCallStore = defineStore('call', () => {
       const dest = ctx.createMediaStreamDestination()
       current.connect(dest)
 
-      const processedTrack = dest.stream.getAudioTracks()[0]
+      processedTrack = dest.stream.getAudioTracks()[0]
+      assertCurrent()
       await publication.replaceTrack(processedTrack, true)
-
-      return () => {
-        // Stop both the processed output track and the raw mic track.
-        // This cleanup is only called on call leave (ensureDisconnected) —
-        // never during a mute/unmute cycle. Stopping rawTrack releases the
-        // browser microphone indicator. AudioContext.close() alone does NOT
-        // stop the underlying MediaStreamTrack.
-        processedTrack.stop()
-        rawTrack.stop()
-        ctx.close().catch(() => {})
-      }
+      assertCurrent()
     } catch (err) {
-      console.error('[call] applyAudioProcessing failed:', err)
-      ctx.close().catch(() => {})
+      // Keep the original mic usable on an ordinary processing failure, but
+      // release capture when its room has gone away.
+      cleanup(err instanceof CallJoinCancelledError || room.value !== owner)
       throw err
     }
   }
 
-  async function enableMicrophoneWithProcessing(current: Room): Promise<void> {
+  async function enableMicrophoneWithProcessing(current: Room, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted || room.value !== current) throw new CallJoinCancelledError()
     await current.localParticipant.setMicrophoneEnabled(true, buildAudioCaptureOptions())
+    const pub = current.localParticipant.getTrackPublication(Track.Source.Microphone)
+    const audioTrack = pub?.track as LocalAudioTrack | undefined
+    if (signal?.aborted || room.value !== current) {
+      // Permission/capture can finish after Leave. The resulting track belongs
+      // to the old room and must never become a live orphan.
+      audioTrack?.stop()
+      if (audioTrack) await current.localParticipant.unpublishTrack(audioTrack, true)
+      throw new CallJoinCancelledError()
+    }
     micEnabled.value = true
     callDebug('microphone enabled', { localParticipant: current.localParticipant.identity })
 
     const prefs = loadAudioPrefs()
-    const pub = current.localParticipant.getTrackPublication(Track.Source.Microphone)
-    const audioTrack = pub?.track as LocalAudioTrack | undefined
+    stopAudioProcessing(current)
     if (!audioTrack) {
-      audioProcessingCleanup?.()
-      audioProcessingCleanup = null
       return
     }
 
     try {
-      audioProcessingCleanup?.()
-      audioProcessingCleanup = await applyAudioProcessing(audioTrack, {
+      await applyAudioProcessing(current, audioTrack, {
         autoGainControl: prefs.autoGainControl,
         microphoneGain: prefs.microphoneGain,
         rnnoiseEnabled: prefs.rnnoiseEnabled,
-      })
+      }, signal)
       callDebug('audio processing applied', {
         gain: prefs.microphoneGain,
         rnnoise: prefs.rnnoiseEnabled,
         agc: prefs.autoGainControl,
       })
     } catch (err) {
+      if (err instanceof CallJoinCancelledError) throw err
       callDebug('audio processing failed', { error: err instanceof Error ? err.message : String(err) })
     }
   }
 
-  function createRoom(): Room {
+  function createRoom(joinController: AbortController): Room {
     const next = new Room({
       adaptiveStream: true,
       dynacast: true,
@@ -1781,6 +1837,9 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.Disconnected, () => {
+      stopAudioProcessing(next)
+      joinController.abort(new Error('Call disconnected while joining'))
+      if (room.value !== next) return
       callDebug('room disconnected', {
         room: next.name,
         canPlaybackAudio: next.canPlaybackAudio,
@@ -1814,6 +1873,10 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.Connected, () => {
+      if (room.value !== next || joinController.signal.aborted) {
+        void next.disconnect().catch(err => callDebug('cancelled room disconnect failed', { error: toErrorMessage(err) }))
+        return
+      }
       callDebug('room connected', {
         room: next.name,
         localParticipant: next.localParticipant.identity,
@@ -1830,11 +1893,13 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.Reconnecting, () => {
+      if (room.value !== next) return
       callDebug('room reconnecting', { room: next.name })
       clearCallReactions()
     })
 
     next.on(RoomEvent.Reconnected, () => {
+      if (room.value !== next) return
       callDebug('room reconnected', {
         room: next.name,
         canPlaybackAudio: next.canPlaybackAudio,
@@ -1851,6 +1916,7 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.ParticipantConnected, (participant) => {
+      if (room.value !== next) return
       const isKnownParticipant = knownRemoteParticipantSids.has(participant.sid)
       knownRemoteParticipantSids.add(participant.sid)
       if (screenShareEnabled.value) {
@@ -1877,6 +1943,7 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.ParticipantDisconnected, (participant) => {
+      if (room.value !== next) return
       const isKnownParticipant = knownRemoteParticipantSids.delete(participant.sid)
       if (annotationSessionState.value?.sharerIdentity === participant.identity) {
         clearAnnotationSession()
@@ -1902,6 +1969,7 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
+      if (room.value !== next) return
       if (topic === SCREEN_ANNOTATION_TOPIC) {
         const accepted = ingestScreenAnnotationPacket(payload, participant?.identity)
         if (accepted) return
@@ -1924,6 +1992,7 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      if (room.value !== next) return
       callDebug('track subscribed', {
         participant: participant.identity,
         publicationSid: publication.trackSid,
@@ -1945,6 +2014,7 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+      if (room.value !== next) return
       callDebug('track unsubscribed', {
         participant: participant.identity,
         publicationSid: publication.trackSid,
@@ -1966,6 +2036,7 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.TrackPublished, (publication, participant) => {
+      if (room.value !== next) return
       if (!participant.isLocal) {
         if (isScreenSource(publication.source)) {
           syncRemoteScreenPublicationSubscription(publication, participant, 'track-published')
@@ -2001,6 +2072,7 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.TrackSubscriptionFailed, (trackSid, participant) => {
+      if (room.value !== next) return
       logScreenShare('track subscription failed', {
         trackSid,
         participant: participant.identity,
@@ -2009,6 +2081,7 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.LocalTrackPublished, (publication) => {
+      if (room.value !== next) return
       mediaVersion.value += 1
       if (isScreenSource(publication.source)) {
         localScreenShareUsedInSession = true
@@ -2041,6 +2114,7 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.LocalTrackUnpublished, (publication) => {
+      if (room.value !== next) return
       mediaVersion.value += 1
       if (isScreenSource(publication.source)) {
         void publishLocalAnnotationSessionUpdate(false, 'unknown', '')
@@ -2084,6 +2158,7 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+      if (room.value !== next) return
       callDebug('audio playback status changed', {
         canPlaybackAudio: next.canPlaybackAudio,
       })
@@ -2091,6 +2166,7 @@ export const useCallStore = defineStore('call', () => {
     })
 
     next.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+      if (room.value !== next) return
       activeSpeakerSids.value = new Set(speakers.map(s => s.sid))
       mediaVersion.value += 1
     })
@@ -2102,21 +2178,32 @@ export const useCallStore = defineStore('call', () => {
     syncRemoteTrackSubscriptions(current, 'sync')
   }
 
-  function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  function awaitJoinStep<T>(promise: Promise<T>, signal: AbortSignal, timeoutMs?: number): Promise<T> {
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error(message))
-      }, ms)
+      const cleanup = () => {
+        if (timeout) clearTimeout(timeout)
+        signal.removeEventListener('abort', onAbort)
+      }
+      const onAbort = () => {
+        cleanup()
+        reject(signal.reason)
+      }
+      const timeout = timeoutMs === undefined ? null : setTimeout(() => {
+        cleanup()
+        reject(new Error('Timed out while joining huddle'))
+      }, timeoutMs)
+      signal.addEventListener('abort', onAbort, { once: true })
       void promise.then(
         (result) => {
-          clearTimeout(timeout)
+          cleanup()
           resolve(result)
         },
         (err) => {
-          clearTimeout(timeout)
+          cleanup()
           reject(err)
         },
       )
+      if (signal.aborted) onAbort()
     })
   }
 
@@ -2131,50 +2218,58 @@ export const useCallStore = defineStore('call', () => {
       activeCallId: activeCallId.value || null,
       remoteParticipantCount: remoteParticipantCount.value,
     })
-    audioProcessingCleanup?.()
-    audioProcessingCleanup = null
-    stopTrackedDisplayCaptureTracks(`ensureDisconnected:pre-room:${teardownId}`)
     const current = room.value
-    clearPendingJoin()
+    if (current) stopAudioProcessing(current)
+    stopTrackedDisplayCaptureTracks(`ensureDisconnected:pre-room:${teardownId}`)
     stopRemoteAudioStatsLoop()
     clearEmptyCallAutoCloseTimer()
-    if (!current) {
-      clearAnnotationSession()
-      clearCallReactions()
-      remoteScreenShareReceiveEnabled.value = true
-      suppressParticipantChangeSounds = false
-      logScreenShare('ensureDisconnected skipped: no active room', { teardownId })
-      return
-    }
-    trackLocalScreenCapturePublications(current, 'ensureDisconnected:pre-stop', { teardownId })
-    logLocalCaptureState(current, 'ensureDisconnected:before-stop', { teardownId })
-    await stopAllLocalCaptureTracks(current, teardownId)
-    logLocalCaptureState(current, 'ensureDisconnected:after-stop', { teardownId })
-    try {
-      console.info('[call-leave] disconnecting room', {
-        room: current.name,
-        conversationId: activeConversationId.value,
-        activeCallId: activeCallId.value,
-      })
-      callDebug('disconnecting room', { room: current.name })
-      await current.disconnect()
-      console.info('[call-leave] disconnect resolved', {
-        room: current.name,
-      })
-    } catch (err) {
-      logScreenShare('room disconnect failed', {
-        teardownId,
-        room: current.name,
-        error: toErrorMessage(err),
-      })
-    }
+    // Release ownership before awaiting SDK teardown. Events and continuations
+    // from this room must not mutate a replacement call.
     room.value = null
+    connected.value = false
+    connecting.value = false
+    micEnabled.value = false
+    cameraEnabled.value = false
+    screenShareEnabled.value = false
+    activeCallId.value = ''
+    activeRoomName.value = ''
+    activeConversationId.value = ''
+    remoteParticipantCount.value = 0
+    activeSpeakerSids.value = new Set()
+    playbackBlocked.value = false
+    handActionInFlight.value = false
+    mediaVersion.value += 1
     clearAnnotationSession()
     clearCallReactions()
     remoteScreenShareReceiveEnabled.value = true
     knownRemoteParticipantSids.clear()
+    if (!current) {
+      suppressParticipantChangeSounds = false
+      logScreenShare('ensureDisconnected skipped: no active room', { teardownId })
+      await roomTeardown
+      return
+    }
     suppressParticipantChangeSounds = false
-    logTrackedDisplayCaptureState('ensureDisconnected:end', { teardownId })
+    roomTeardown = (async () => {
+      trackLocalScreenCapturePublications(current, 'ensureDisconnected:pre-stop', { teardownId })
+      try {
+        await stopAllLocalCaptureTracks(current, teardownId)
+      } finally {
+        // Even if one capture API fails, close the room's transport.
+        try {
+          await current.disconnect()
+        } catch (err) {
+          logScreenShare('room disconnect failed', { teardownId, room: current.name, error: toErrorMessage(err) })
+        }
+      }
+      logTrackedDisplayCaptureState('ensureDisconnected:end', { teardownId })
+    })()
+    try {
+      await roomTeardown
+    } finally {
+      // A failed teardown must not poison subsequent join attempts.
+      roomTeardown = Promise.resolve()
+    }
   }
 
   async function stopAllLocalCaptureTracks(current: Room, teardownId: string) {
@@ -2508,7 +2603,23 @@ export const useCallStore = defineStore('call', () => {
     inviteeUserIds?: string[]
     joinExistingOnly?: boolean
   }) {
-    const ws = useWsStore()
+    const replacingPendingJoin = joinAbortController !== null
+    cancelPendingCallOperations()
+    if (replacingPendingJoin && room.value) {
+      // Release the cancelled room now; a replacement token may arrive much
+      // later. Its events must not reset the replacement request's state.
+      void ensureDisconnected().catch(err => callDebug('cancelled join teardown failed', { error: toErrorMessage(err) }))
+    }
+    const generation = callGeneration
+    const controller = new AbortController()
+    joinAbortController = controller
+    let joiningRoom: Room | null = null
+    const assertCurrent = () => {
+      if (controller.signal.aborted) throw controller.signal.reason
+      if (generation !== callGeneration || (joiningRoom && room.value !== joiningRoom)) {
+        throw new CallJoinCancelledError()
+      }
+    }
     const { conversationId, kind, visibility } = args
     const inviteeUserIds = args.inviteeUserIds ?? []
     const joinExistingOnly = args.joinExistingOnly ?? false
@@ -2533,9 +2644,11 @@ export const useCallStore = defineStore('call', () => {
     try {
       if (!currentActive && !joinExistingOnly) {
         await requestCreateCall(conversationId, kind, visibility, inviteeUserIds)
+        assertCurrent()
       }
 
       const join = await requestJoinToken(conversationId, kind, visibility)
+      assertCurrent()
       if (join.callId) {
         chatStore.applyCallRaisedHandsSnapshot(join.callId, conversationId, join.raisedHands)
       }
@@ -2550,11 +2663,14 @@ export const useCallStore = defineStore('call', () => {
         room: join.livekitRoom,
       })
 
-      await ensureDisconnected()
+      await awaitJoinStep(ensureDisconnected(), controller.signal)
+      assertCurrent()
       const canUseMediaDevices = hasGetUserMedia()
 
-      const nextRoom = createRoom()
+      const nextRoom = createRoom(controller)
+      joiningRoom = nextRoom
       room.value = nextRoom
+      connecting.value = true
       activeConversationId.value = conversationId
       activeRoomName.value = join.livekitRoom
       activeCallId.value = join.callId || (chatStore.activeCalls.find(call => call.conversationId === conversationId)?.id ?? '')
@@ -2563,11 +2679,12 @@ export const useCallStore = defineStore('call', () => {
         room: join.livekitRoom,
         livekitUrl: normalizedLiveKitUrl,
       })
-      await withTimeout(
+      await awaitJoinStep(
         nextRoom.connect(normalizedLiveKitUrl, join.livekitToken),
+        controller.signal,
         JOIN_ROOM_CONNECT_TIMEOUT_MS,
-        'Timed out while joining huddle',
       )
+      assertCurrent()
 
       // PCTransport.publisher accumulates one `.once('rtpVideoPayloadTypes')`
       // listener per negotiate() call (triggered by every replaceTrack and track
@@ -2584,7 +2701,8 @@ export const useCallStore = defineStore('call', () => {
       logLocalVideoPublications(nextRoom, 'after-connect')
       logRemoteVideoPublications(nextRoom, 'after-connect')
       if (canUseMediaDevices) {
-        await nextRoom.startAudio()
+        await awaitJoinStep(nextRoom.startAudio(), controller.signal)
+        assertCurrent()
         callDebug('startAudio resolved', {
           canPlaybackAudio: nextRoom.canPlaybackAudio,
         })
@@ -2603,8 +2721,10 @@ export const useCallStore = defineStore('call', () => {
       micEnabled.value = false
       if (canUseMediaDevices && !audioPrefs.muteMicOnJoinCall) {
         try {
-          await enableMicrophoneWithProcessing(nextRoom)
+          await awaitJoinStep(enableMicrophoneWithProcessing(nextRoom, controller.signal), controller.signal)
         } catch (err) {
+          assertCurrent()
+          if (err instanceof CallJoinCancelledError) throw err
           errorMessage.value = err instanceof Error
             ? err.message
             : 'Failed to enable microphone.'
@@ -2613,6 +2733,7 @@ export const useCallStore = defineStore('call', () => {
           })
         }
       }
+      assertCurrent()
       cameraEnabled.value = false
       screenShareEnabled.value = false
       callDebug('call connected summary', {
@@ -2621,19 +2742,28 @@ export const useCallStore = defineStore('call', () => {
         canPlaybackAudio: nextRoom.canPlaybackAudio,
       })
     } catch (err) {
-      await ensureDisconnected()
+      if (err instanceof CallJoinCancelledError || generation !== callGeneration) return
+      if (!joiningRoom || room.value === joiningRoom) await ensureDisconnected()
+      if (generation !== callGeneration) return
       errorMessage.value = err instanceof Error ? err.message : 'Failed to join call'
       callDebug('startOrJoinCall failed', {
         error: err instanceof Error ? err.message : String(err),
       })
       throw err
     } finally {
-      clearPendingJoin()
-      connecting.value = false
+      if (generation === callGeneration) {
+        clearPendingCreateCall()
+        clearPendingJoin()
+        connecting.value = false
+        joinAbortController = null
+      }
     }
   }
 
   async function leaveCall() {
+    cancelPendingCallOperations()
+    const generation = callGeneration
+    errorMessage.value = ''
     console.info('[call-leave] leave requested', {
       connected: connected.value,
       room: room.value?.name ?? null,
@@ -2642,6 +2772,7 @@ export const useCallStore = defineStore('call', () => {
       remoteParticipantCount: remoteParticipantCount.value,
     })
     await ensureDisconnected()
+    if (generation !== callGeneration) return
     if (platform?.type === 'tauri' && localScreenShareUsedInSession) {
       logScreenShare('requesting tauri app restart after screen share teardown', {
         reason: 'post-leave-screen-share-used',
@@ -2658,7 +2789,8 @@ export const useCallStore = defineStore('call', () => {
   }
 
   async function resetRuntimeState() {
-    await ensureDisconnected()
+    cancelPendingCallOperations()
+    const teardown = ensureDisconnected()
     clearAnnotationSession()
     clearCallReactions()
     localScreenShareUsedInSession = false
@@ -2687,6 +2819,7 @@ export const useCallStore = defineStore('call', () => {
     errorMessage.value = ''
     knownRemoteParticipantSids.clear()
     suppressParticipantChangeSounds = false
+    await teardown
   }
 
   async function toggleMute() {
@@ -2768,6 +2901,7 @@ export const useCallStore = defineStore('call', () => {
     })
 
     await local.setMicrophoneEnabled(false)
+    if (room.value !== current) return
     micEnabled.value = false
     console.info('[call-input-device] microphone disabled before republish', {
       room: current.name,
@@ -2793,8 +2927,8 @@ export const useCallStore = defineStore('call', () => {
 
     // Device changes require rebuilding the capture + processing pipeline so the
     // new source track becomes the one LiveKit publishes.
-    audioProcessingCleanup?.()
-    audioProcessingCleanup = null
+    if (room.value !== current) return
+    stopAudioProcessing(current)
     await enableMicrophoneWithProcessing(current)
     console.info('[call-input-device] switchInputDevice completed', {
       room: current.name,
@@ -2986,7 +3120,7 @@ export const useCallStore = defineStore('call', () => {
   function registerWsHandlers() {
     const ws = useWsStore()
     ws.onJoinCallTokenResponse((resp, requestId) => {
-      if (pendingJoinRequestId && requestId !== pendingJoinRequestId) return
+      if (!pendingJoinRequestId || requestId !== pendingJoinRequestId) return
       callDebug('ws joinCallTokenResponse', {
         room: resp.livekitRoom,
         livekitUrl: resp.livekitUrl,
@@ -2997,7 +3131,7 @@ export const useCallStore = defineStore('call', () => {
       clearPendingJoin()
     })
     ws.onCreateCallResponse((resp, requestId) => {
-      if (pendingCreateCallRequestId && requestId !== pendingCreateCallRequestId) return
+      if (!pendingCreateCallRequestId || requestId !== pendingCreateCallRequestId) return
       callDebug('ws createCallResponse', resp)
       if (pendingCreateCallResolve) {
         pendingCreateCallResolve()

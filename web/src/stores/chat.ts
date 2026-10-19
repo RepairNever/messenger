@@ -62,7 +62,7 @@ import type {
   SavedMessageItem as HttpSavedMessageItem,
   UnreadFeedItem as HttpUnreadFeedItem,
 } from '@/services/http/chatApi'
-import { decryptDMMessage, localEncryptedDMDeviceId } from '@/services/e2ee/dmE2ee'
+import { decryptDMMessage, localEncryptedDMDeviceId, type EncryptedDMEnvelope } from '@/services/e2ee/dmE2ee'
 import type { MessageEntity as ProtoMessageEntity } from '@/shared/proto/packets_pb'
 import { getOrCreateClientInstanceId } from '@/services/storage/clientInstanceStorage'
 import { generateId } from '@/services/id'
@@ -222,6 +222,41 @@ export interface Message {
   failReason?: string
   /** Internal: true once a server event or replay confirmed this thread reply. */
   serverConfirmed?: boolean
+}
+
+// History DTOs contain plain values (including bigint sequences). Compare them
+// without serialization so an unchanged row keeps its reactive object identity.
+function sameMessageValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+  if (Array.isArray(left) !== Array.isArray(right)) return false
+  if (Array.isArray(left) && Array.isArray(right) && left.length !== right.length) return false
+  const a = left as Record<string, unknown>
+  const b = right as Record<string, unknown>
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])].every(key => sameMessageValue(a[key], b[key]))
+}
+
+export function encryptedDMPayloadsFromEnvelopes(envelopes?: EncryptedDMEnvelope[]): Message['encryptedDMPayloads'] {
+  return envelopes?.map(payload => ({
+    recipient_device_id: payload.recipientDeviceId,
+    sender_device_id: payload.senderDeviceId,
+    algorithm: payload.algorithm,
+    session_message: btoa(Array.from(payload.sessionMessage, byte => String.fromCharCode(byte)).join('')),
+    metadata_aad: btoa(Array.from(payload.metadataAad, byte => String.fromCharCode(byte)).join('')),
+  }))
+}
+
+function sameEncryptedPayloadForDevice(
+  left: Message['encryptedDMPayloads'],
+  right: Message['encryptedDMPayloads'],
+  deviceId = localEncryptedDMDeviceId(),
+): boolean {
+  if (!deviceId) return sameMessageValue(left, right)
+  // Live events can include several of this user's devices, while HTTP history
+  // contains only the requested device. Only its envelope determines our text.
+  const previous = left?.find(payload => payload.recipient_device_id === deviceId)
+  const next = right?.find(payload => payload.recipient_device_id === deviceId)
+  return Boolean(previous && next && sameMessageValue(previous, next))
 }
 
 interface PendingReactionOp {
@@ -495,6 +530,7 @@ const DEBUG_REACTIONS = false
 
 interface ConversationHistoryState {
   initialized: boolean
+  hasLoaded?: boolean
   loading: boolean
   hasMore: boolean
   nextBeforeChannelSeq?: bigint
@@ -601,6 +637,7 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<Record<string, Message[]>>({})
   const conversationHistoryState = new Map<string, ConversationHistoryState>()
   const conversationInitialLoadingById = ref<Record<string, boolean>>({})
+  const conversationHistorySyncById = ref<Record<string, 'syncing' | 'error'>>({})
   const threadMessages = ref<Record<string, Message[]>>({})
   const threadReplayVersionByRoot = ref<Record<string, number>>({})
   const threadReplayStatusByRoot = ref<Record<string, 'idle' | 'loading' | 'error'>>({})
@@ -1021,6 +1058,14 @@ export const useChatStore = defineStore('chat', () => {
   function isConversationInitialLoading(conversationId: string): boolean {
     if (!conversationId) return false
     return conversationInitialLoadingById.value[conversationId] === true
+  }
+
+  function conversationHistorySyncStatus(conversationId: string): 'idle' | 'syncing' | 'error' {
+    return conversationHistorySyncById.value[conversationId] ?? 'idle'
+  }
+
+  async function retryConversationHistory(conversationId: string): Promise<void> {
+    await ensureConversationHistoryResult(conversationId, undefined, true)
   }
 
   function conversationHasMoreHistory(conversationId: string): boolean {
@@ -1684,6 +1729,7 @@ export const useChatStore = defineStore('chat', () => {
     threadReplayStatusByRoot.value = {}
     threadSummaries.value = {}
     conversationInitialLoadingById.value = {}
+    conversationHistorySyncById.value = {}
     activeThreadRootId.value = ''
     activeThreadConversationId.value = ''
     focusedMessageId.value = ''
@@ -2595,6 +2641,7 @@ export const useChatStore = defineStore('chat', () => {
     }
     conversationHistoryState.clear()
     conversationInitialLoadingById.value = {}
+    conversationHistorySyncById.value = {}
     historyLoadTokenByConversation.clear()
     historyRequestByConversation.clear()
     sentReadByConversation.clear()
@@ -2762,7 +2809,14 @@ export const useChatStore = defineStore('chat', () => {
     const token = ++historyLoadToken
     historyLoadTokenByConversation.set(conversationId, token)
     state.loading = true
-    const isInitialLoad = !state.initialized
+    // Read-frontier recovery can invalidate initialized without unloading the
+    // conversation. Only an empty, never-loaded view needs the opening overlay.
+    const isInitialLoad = !state.hasLoaded && !(messages.value[conversationId]?.length)
+    const isLatestPage = typeof beforeChannelSeq !== 'bigint'
+    if (isLatestPage) {
+      delete conversationHistorySyncById.value[conversationId]
+      if (!isInitialLoad) conversationHistorySyncById.value[conversationId] = 'syncing'
+    }
     if (isInitialLoad) {
       conversationInitialLoadingById.value = {
         ...conversationInitialLoadingById.value,
@@ -2800,6 +2854,7 @@ export const useChatStore = defineStore('chat', () => {
         }
         const applyStartedAt = performance.now()
         applyConversationHistory(conversationId, page.messages)
+        state.hasLoaded = true
         const pageReadSeq = page.messages.reduce((highest, message) => (
           !message.thread_root_message_id && BigInt(message.channel_seq) > highest
             ? BigInt(message.channel_seq)
@@ -2830,6 +2885,9 @@ export const useChatStore = defineStore('chat', () => {
         })
         return { loaded: true, messageCount: page.messages.length, lastReadSeq }
       } catch {
+        if (isLatestPage && token === historyLoadTokenByConversation.get(conversationId)) {
+          conversationHistorySyncById.value[conversationId] = 'error'
+        }
         // Keep the shell usable; history reload can fail independently from WS state.
         logConversationPerf('history:request:error', {
           conversationId,
@@ -2840,6 +2898,9 @@ export const useChatStore = defineStore('chat', () => {
         const isCurrentRequest = token === historyLoadTokenByConversation.get(conversationId)
         if (isCurrentRequest) {
           state.loading = false
+          if (isLatestPage && conversationHistorySyncById.value[conversationId] === 'syncing') {
+            delete conversationHistorySyncById.value[conversationId]
+          }
         }
         if (isInitialLoad && isCurrentRequest) {
           conversationInitialLoadingById.value = {
@@ -4002,6 +4063,7 @@ export const useChatStore = defineStore('chat', () => {
     const nextInitialLoading = { ...conversationInitialLoadingById.value }
     delete nextInitialLoading[conversationId]
     conversationInitialLoadingById.value = nextInitialLoading
+    delete conversationHistorySyncById.value[conversationId]
     delete messages.value[conversationId]
     if (activeThreadConversationId.value === conversationId) {
       closeThread()
@@ -4022,6 +4084,7 @@ export const useChatStore = defineStore('chat', () => {
   function clearDMConversationHistoryLocal(conversationId: string, recoverVisible = true) {
     if (!conversationId) return
     messageStateGeneration += 1
+    delete conversationHistorySyncById.value[conversationId]
 
     cancelScheduledMessageCache(conversationId)
 
@@ -4577,6 +4640,7 @@ export const useChatStore = defineStore('chat', () => {
       isSaved: false,
       contentMode,
       senderDeviceId: evt.senderDeviceId || undefined,
+      encryptedDMPayloads: encryptedDMPayloadsFromEnvelopes(evt.encryptedDmPayload?.recipients),
       serverConfirmed: Boolean(evt.threadRootMessageId) || undefined,
     }
   }
@@ -4589,13 +4653,17 @@ export const useChatStore = defineStore('chat', () => {
     if (message.contentMode !== 'dm_pairwise_signal_v1') return
     const sessionGeneration = decryptionSessionGeneration
     const generation = secretHistoryGeneration.get(message.channelId)
+    const deviceId = localEncryptedDMDeviceId()
     void decryptDMMessage(payloads).then(body => {
       if (body === null) return
       if (sessionGeneration !== decryptionSessionGeneration || generation !== secretHistoryGeneration.get(message.channelId)) return
+      if (deviceId !== localEncryptedDMDeviceId()) return
       // `message` is initially a plain object. Resolve its reactive store
       // counterpart at completion so Vue updates the currently rendered row.
       const canonicalMessage = findCanonicalMessage()
-      if (canonicalMessage?.body === 'Decrypting encrypted message...') {
+      if (canonicalMessage?.body === 'Decrypting encrypted message...'
+        && canonicalMessage.editedAt === message.editedAt
+        && sameEncryptedPayloadForDevice(canonicalMessage.encryptedDMPayloads, message.encryptedDMPayloads, deviceId)) {
         canonicalMessage.body = body
       }
     }).catch(() => {})
@@ -4659,12 +4727,22 @@ export const useChatStore = defineStore('chat', () => {
         senderDeviceId: item.sender_device_id || undefined,
         encryptedDMPayloads: item.encrypted_dm_payloads,
       }
-      byId.set(item.id, nextMessage)
-      decryptAndApplyMessage(
-        nextMessage,
-        item.encrypted_dm_payloads,
-        () => messages.value[conversationId]?.find(message => message.id === nextMessage.id),
-      )
+      const preserveDecryptedBody = prev?.contentMode === 'dm_pairwise_signal_v1'
+        && contentMode === 'dm_pairwise_signal_v1'
+        && prev.body !== 'Decrypting encrypted message...'
+        && prev.editedAt === nextMessage.editedAt
+        && prev.senderDeviceId === nextMessage.senderDeviceId
+        && prev.encryptedDMPayloads !== undefined
+        && sameEncryptedPayloadForDevice(prev.encryptedDMPayloads, nextMessage.encryptedDMPayloads)
+      if (preserveDecryptedBody) nextMessage.body = prev.body
+      byId.set(item.id, prev && sameMessageValue(prev, nextMessage) ? prev : nextMessage)
+      if (!preserveDecryptedBody) {
+        decryptAndApplyMessage(
+          nextMessage,
+          item.encrypted_dm_payloads,
+          () => messages.value[conversationId]?.find(message => message.id === nextMessage.id),
+        )
+      }
 
       const threadReplyCount = Math.max(0, Math.floor(Number(item.thread_reply_count ?? 0)))
       const known = threadSummaries.value[item.id]
@@ -4687,7 +4765,10 @@ export const useChatStore = defineStore('chat', () => {
       void ensureUserDirectory().then(() => refreshSenderLabelsForUsers(unresolvedSenderIds))
     }
 
-    messages.value[conversationId] = Array.from(byId.values()).sort((a, b) => Number(a.channelSeq - b.channelSeq))
+    const merged = Array.from(byId.values()).sort((a, b) => Number(a.channelSeq - b.channelSeq))
+    if (!messages.value[conversationId] || merged.length !== existing.length || merged.some((message, index) => message !== existing[index])) {
+      messages.value[conversationId] = merged
+    }
     scheduleMessageCache(conversationId, messages.value[conversationId])
     const applyMs = Math.round((performance.now() - applyStartedAt) * 100) / 100
     logConversationPerf('history:merge-sort:done', {
@@ -4842,6 +4923,8 @@ export const useChatStore = defineStore('chat', () => {
     showToast,
     isConversationHistoryLoading,
     isConversationInitialLoading,
+    conversationHistorySyncStatus,
+    retryConversationHistory,
     conversationHasMoreHistory,
     loadCachedState,
     applyBootstrapSnapshot,
