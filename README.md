@@ -61,7 +61,7 @@ A production-grade Slack-like team messenger built with Go and Vue 3. Installabl
 ### Build
 ```bash
 make build                    # Go backend
-cd web && npm run build       # Frontend (vue-tsc + vite build, generates SW)
+cd web && npm run build       # Frontend (generates SW and web/web_client.tar.gz from dist)
 cd web && npm run tauri:build # macOS desktop bundle (Tauri v2 shell)
 ```
 

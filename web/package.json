@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc && vite build",
+    "build": "vue-tsc && vite build && tar -czf web_client.tar.gz -C dist .",
     "preview": "vite preview",
     "tauri:dev": "npm exec tauri dev -- --config src-tauri/tauri.conf.json",
     "tauri:build": "node scripts/tauri-build.cjs",
