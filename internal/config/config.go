@@ -1,6 +1,9 @@
 package config
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/spf13/viper"
@@ -98,8 +101,11 @@ func (c *Config) IsDev() bool {
 }
 
 func Load() (*Config, error) {
+	viper := viper.New()
 	viper.SetConfigFile(".env")
 	viper.AutomaticEnv()
+	// An explicitly empty variable must override a file value or default too.
+	viper.AllowEmptyEnv(true)
 
 	viper.SetDefault("ENV", "production")
 	viper.SetDefault("PORT", "8080")
@@ -119,7 +125,7 @@ func Load() (*Config, error) {
 
 	viper.SetDefault("JWT_SECRET", "change-me-in-production")
 	viper.SetDefault("JWT_ACCESS_TOKEN_TTL", 1*time.Hour)
-	viper.SetDefault("JWT_REFRESH_TOKEN_TTL", 10*365*24*time.Hour)
+	viper.SetDefault("JWT_REFRESH_TOKEN_TTL", 168*time.Hour)
 
 	viper.SetDefault("LIVEKIT_URL", "ws://localhost:7880")
 	viper.SetDefault("LIVEKIT_API_KEY", "")
@@ -169,8 +175,10 @@ func Load() (*Config, error) {
 	viper.SetDefault("BOT_API_RATE_LIMIT_BURST", 20)
 	viper.SetDefault("BOT_API_MAX_CONCURRENT_POLLS", 2)
 
-	// Read .env file if present; ignore missing file
-	viper.ReadInConfig()
+	// Read .env if present, but do not silently ignore a broken configuration.
+	if err := viper.ReadInConfig(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read .env: %w", err)
+	}
 
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {

@@ -95,6 +95,13 @@ make proto                    # Regenerates Go + TypeScript from api/proto/packe
 make sqlc                     # Regenerates Go from internal/repo/queries/*.sql
 ```
 
+## Production backend
+
+See [the production deployment guide](docs/production.md) for the hardened backend
+image, runtime environment configuration, external dependencies, health checks,
+and shutdown settings. Start with `.env.production.example` for production;
+`.env.example` and the bundled Compose stack are development configurations.
+
 ## Configuration
 
 The application uses Viper for configuration management. Configuration can be set via:

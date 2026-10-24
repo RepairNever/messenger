@@ -15,7 +15,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "8080", cfg.Port)
 	assert.Equal(t, "postgres://msgnr:msgnr@localhost/msgnr?sslmode=disable", cfg.DatabaseURL)
 	assert.Equal(t, "change-me-in-production", cfg.JWTSecret)
-	assert.Equal(t, 10*365*24*time.Hour, cfg.JWTRefreshTokenTTL)
+	assert.Equal(t, 168*time.Hour, cfg.JWTRefreshTokenTTL)
 	assert.Equal(t, int32(20), cfg.DBMaxConns)
 	assert.Equal(t, int32(2), cfg.DBMinConns)
 	assert.Equal(t, 1000, cfg.SyncEventLimit)

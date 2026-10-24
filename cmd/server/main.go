@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -38,6 +39,10 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		panic("failed to load config: " + err.Error())
+	}
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintln(os.Stderr, "invalid configuration:", err)
+		os.Exit(1)
 	}
 
 	if err := logger.Init(cfg.IsDev()); err != nil {
