@@ -1,0 +1,22 @@
+# Allow only backend build inputs into the root Docker context.
+**
+!go.mod
+!go.sum
+!sqlc.yaml
+!cmd/
+!cmd/server/
+!cmd/server/**
+!internal/
+!internal/**
+!api/
+!api/proto/
+!api/proto/**
+!migrations/
+!migrations/schema.sql
+
+# Always regenerate code for this build; never copy local credentials.
+internal/gen/
+**/.env
+**/.env.*
+**/*.pem
+**/*.key

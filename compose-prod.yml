@@ -206,8 +206,8 @@ services:
         rtc:
           tcp_port: 7881
           udp_port: 7882
-          use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP:-true}
-          node_ip: "${LIVEKIT_NODE_IP:-}"
+          # Discover the public media address through STUN; no manual node IP.
+          use_external_ip: true
         redis:
           address: 127.0.0.1:${REDIS_HOST_PORT:-16379}
           password: "${REDIS_PASSWORD}"
