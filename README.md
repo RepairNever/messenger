@@ -95,12 +95,15 @@ make proto                    # Regenerates Go + TypeScript from api/proto/packe
 make sqlc                     # Regenerates Go from internal/repo/queries/*.sql
 ```
 
-## Production backend
+## Production deployment
 
-See [the production deployment guide](docs/production.md) for the hardened backend
-image, runtime environment configuration, external dependencies, health checks,
-and shutdown settings. Start with `.env.production.example` for production;
-`.env.example` and the bundled Compose stack are development configurations.
+For the complete messenger behind an existing host Nginx, use
+[`compose-prod.yml`](compose-prod.yml) and the
+[Ubuntu deployment guide](docs/compose-production.md).
+
+For the backend image by itself, see [the backend deployment guide](docs/production.md)
+and `.env.production.example`. `.env.example` and the bundled `compose.yml` are
+development configurations.
 
 ## Configuration
 
