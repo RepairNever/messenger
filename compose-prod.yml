@@ -24,8 +24,18 @@ services:
       INITIAL_OWNER_PASSWORD: ${INITIAL_OWNER_PASSWORD:?Set INITIAL_OWNER_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./migrations/schema.sql:/opt/msgnr/schema.sql:ro
-      - ./etc/prod/initdb.sql:/docker-entrypoint-initdb.d/001-msgnr.sql:ro
+      - type: bind
+        source: ./migrations/schema.sql
+        target: /opt/msgnr/schema.sql
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./etc/prod/initdb.sql
+        target: /docker-entrypoint-initdb.d/001-msgnr.sql
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       # TCP readiness waits for initdb; workspace confirms bootstrap committed.
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d msgnr && psql -U postgres -d msgnr -Atqc 'SELECT 1 FROM workspace LIMIT 1' | grep -qx 1"]
@@ -70,7 +80,12 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY}
     volumes:
-      - ./etc/prod/init-storage.sh:/opt/msgnr/init-storage.sh:ro
+      - type: bind
+        source: ./etc/prod/init-storage.sh
+        target: /opt/msgnr/init-storage.sh
+        read_only: true
+        bind:
+          create_host_path: false
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
     read_only: true
