@@ -1,0 +1,8 @@
+port: 7880
+keys:
+  9aYIuhopwHUpR5ihkEZrkAm1sVHxf9BmqTEMAAtG1: X6OzHRxqWR6s5CuArEEVqyDSs79AnHY6ay7Iw8la
+
+webhook:
+  api_key: 9aYIuhopwHUpR5ihkEZrkAm1sVHxf9BmqTEMAAtG1
+  urls:
+    - http://localhost:8080/api/livekit/webhook
