@@ -153,8 +153,10 @@ services:
     logging: *logging
 
   web:
+    # Package the prebuilt web/web_client.tar.gz; never compile frontend sources here.
     build:
       context: ./web
+      dockerfile: Dockerfile
     ports:
       - "127.0.0.1:${WEB_HOST_PORT:-8080}:80"
     depends_on:

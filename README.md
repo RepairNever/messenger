@@ -101,6 +101,10 @@ For the complete messenger behind an existing host Nginx, use
 [`compose-prod.yml`](compose-prod.yml) and the
 [Ubuntu deployment guide](docs/compose-production.md).
 
+The frontend Docker image uses the committed `web/web_client.tar.gz`. Regenerate
+and commit that archive from your development machine or CI after frontend changes;
+production deployment packages it directly without compiling the web client.
+
 For the backend image by itself, see [the backend deployment guide](docs/production.md)
 and `.env.production.example`. `.env.example` and the bundled `compose.yml` are
 development configurations.

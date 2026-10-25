@@ -1,13 +1,5 @@
-node_modules/
-dist/
-src-tauri/
-.env
-.env.*
-.git/
-coverage/
-playwright-report/
-test-results/
-*.tar.gz
-*.log
-*.pem
-*.key
+# Package only the committed frontend release and server configuration.
+**
+!Dockerfile
+!nginx.conf
+!web_client.tar.gz
