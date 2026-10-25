@@ -85,11 +85,12 @@ type channelResponse struct {
 }
 
 type dmCandidateResponse struct {
-	UserID       string           `json:"user_id"`
-	DisplayName  string           `json:"display_name"`
-	Email        string           `json:"email"`
-	AvatarURL    string           `json:"avatar_url"`
-	CustomStatus *userstatus.Body `json:"custom_status"`
+	UserID        string           `json:"user_id"`
+	DisplayName   string           `json:"display_name"`
+	Email         string           `json:"email"`
+	AvatarURL     string           `json:"avatar_url"`
+	CustomStatus  *userstatus.Body `json:"custom_status"`
+	HasE2EEDevice bool             `json:"has_e2ee_device"`
 }
 
 type createDirectMessageRequest struct {
@@ -1704,11 +1705,12 @@ func (h *Handler) listDMCandidates(w http.ResponseWriter, r *http.Request, princ
 	resp := make([]dmCandidateResponse, 0, len(candidates))
 	for _, candidate := range candidates {
 		resp = append(resp, dmCandidateResponse{
-			UserID:       candidate.UserID.String(),
-			DisplayName:  candidate.DisplayName,
-			Email:        candidate.Email,
-			AvatarURL:    candidate.AvatarURL,
-			CustomStatus: userstatus.ToBody(candidate.CustomStatus),
+			UserID:        candidate.UserID.String(),
+			DisplayName:   candidate.DisplayName,
+			Email:         candidate.Email,
+			AvatarURL:     candidate.AvatarURL,
+			CustomStatus:  userstatus.ToBody(candidate.CustomStatus),
+			HasE2EEDevice: candidate.HasE2EEDevice,
 		})
 	}
 

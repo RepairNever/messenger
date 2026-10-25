@@ -29,12 +29,13 @@ type queryer interface {
 }
 
 type DMCandidate struct {
-	UserID       uuid.UUID
-	DisplayName  string
-	Email        string
-	AvatarURL    string
-	CustomStatus *userstatus.Status
-	Presence     string
+	UserID        uuid.UUID
+	DisplayName   string
+	Email         string
+	AvatarURL     string
+	CustomStatus  *userstatus.Status
+	Presence      string
+	HasE2EEDevice bool
 }
 
 type ConversationMember struct {

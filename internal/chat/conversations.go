@@ -35,10 +35,11 @@ func (s *Service) ListDMCandidates(ctx context.Context, requesterID uuid.UUID) (
 	candidates := make([]DMCandidate, 0, len(rows))
 	for _, row := range rows {
 		candidates = append(candidates, DMCandidate{
-			UserID:      row.ID,
-			DisplayName: row.DisplayName,
-			Email:       row.Email,
-			AvatarURL:   row.AvatarUrl,
+			UserID:        row.ID,
+			DisplayName:   row.DisplayName,
+			Email:         row.Email,
+			AvatarURL:     row.AvatarUrl,
+			HasE2EEDevice: row.HasE2eeDevice,
 			CustomStatus: userstatus.ActiveFromNullTime(
 				row.CustomStatusText,
 				row.CustomStatusEmoji,

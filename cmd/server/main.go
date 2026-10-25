@@ -82,6 +82,15 @@ func main() {
 	searchSvc := search.NewService(db.Pool)
 	searchHandler := search.NewHandler(searchSvc, authSvc, log)
 	callSvc := calls.NewService(db.Pool, eventStore, cfg)
+	callReconcileCtx, callReconcileCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	reapedCalls, err := callSvc.ReapAbandonedCalls(callReconcileCtx, time.Now().Add(-ws.DefaultPresenceLeaseTTL))
+	callReconcileCancel()
+	if err != nil {
+		log.Fatal("Startup call reconciliation failed", zap.Error(err))
+	}
+	if reapedCalls > 0 {
+		log.Info("Startup call reconciliation ended abandoned calls", zap.Int("count", reapedCalls))
+	}
 	callHandler := calls.NewHandler(callSvc)
 	bootstrapSvc := bootstrap.NewService(db.Pool, cfg)
 	syncSvc := syncsvc.NewService(db.Pool, cfg, eventStore, authSvc.CanReceiveEvent)
@@ -136,10 +145,21 @@ func main() {
 		defer close(callExpiryDone)
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
+		reconcileTicker := time.NewTicker(time.Minute)
+		defer reconcileTicker.Stop()
 		for {
 			select {
 			case <-callExpiryCtx.Done():
 				return
+			case <-reconcileTicker.C:
+				runCtx, cancel := context.WithTimeout(callExpiryCtx, 30*time.Second)
+				count, err := callSvc.ReapAbandonedCalls(runCtx, time.Now().Add(-ws.DefaultPresenceLeaseTTL))
+				cancel()
+				if err != nil {
+					log.Warn("Abandoned call sweep failed", zap.Error(err))
+				} else if count > 0 {
+					log.Info("Abandoned call sweep ended calls", zap.Int("count", count))
+				}
 			case <-ticker.C:
 				runCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				result, err := callSvc.ExpireInvites(runCtx)

@@ -208,6 +208,8 @@ services:
           udp_port: 7882
           # Discover the public media address through STUN; no manual node IP.
           use_external_ip: true
+          # NATs without hairpin routing can fail the public-address self-check.
+          skip_external_ip_validation: ${LIVEKIT_SKIP_EXTERNAL_IP_VALIDATION:-false}
         redis:
           address: 127.0.0.1:${REDIS_HOST_PORT:-16379}
           password: "${REDIS_PASSWORD}"

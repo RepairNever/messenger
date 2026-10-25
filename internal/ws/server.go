@@ -37,11 +37,15 @@ import (
 
 const protocolVersion uint32 = 1
 
+// DefaultPresenceLeaseTTL is shared with abandoned-call reconciliation so both
+// use the same heartbeat freshness rule.
+const DefaultPresenceLeaseTTL = 90 * time.Second
+
 const (
 	taskCollabSyncMagic0    = 0x54 // 'T'
 	taskCollabSyncMagic1    = 0x44 // 'D'
 	taskCollabSyncProtocolV = 1
-	defaultPresenceLeaseTTL = 90 * time.Second
+	defaultPresenceLeaseTTL = DefaultPresenceLeaseTTL
 	defaultPresenceSweepInt = 15 * time.Second
 )
 

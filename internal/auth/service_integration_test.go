@@ -180,6 +180,45 @@ func TestIntegration_CanReceiveEvent_CallStateChangedDeniesNonParticipant(t *tes
 	assert.False(t, svc.CanReceiveEvent(ctx, principal, callEvent))
 }
 
+func TestIntegration_CanReceiveEvent_EndedCallAllowsFormerParticipantOnly(t *testing.T) {
+	pool, _ := testdb.New(t)
+	ctx := context.Background()
+	owner := seedAuthCallUser(t, ctx, pool, "Owner")
+	guest := seedAuthCallUser(t, ctx, pool, "Former guest")
+	unrelated := seedAuthCallUser(t, ctx, pool, "Unrelated")
+	channel := seedAuthDMConversation(t, ctx, pool, owner)
+	otherChannel := seedAuthDMConversation(t, ctx, pool, owner)
+	call := seedAuthActiveCall(t, ctx, pool, channel, owner)
+	otherCall := seedAuthActiveCall(t, ctx, pool, otherChannel, owner)
+	seedAuthCallParticipant(t, ctx, pool, call, guest)
+	_, err := pool.Exec(ctx, `UPDATE calls SET status = 'ended', ended_at = now() WHERE id = $1`, call)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `UPDATE call_participants SET left_at = now() WHERE call_id = $1`, call)
+	require.NoError(t, err)
+	svc := authsvc.NewService(nil, nil, nil, pool, 0, nil)
+	principal := authsvc.Principal{UserID: guest}
+	state := &packetspb.CallStateChangedEvent{CallId: call.String(), ConversationId: channel.String(), Status: packetspb.CallStatus_CALL_STATUS_ENDED}
+	event := &packetspb.ServerEvent{
+		ConversationId: channel.String(),
+		EventType:      packetspb.EventType_EVENT_TYPE_CALL_STATE_CHANGED,
+		Payload:        &packetspb.ServerEvent_CallStateChanged{CallStateChanged: state},
+	}
+	assert.True(t, svc.CanReceiveEvent(ctx, principal, event))
+	assert.False(t, svc.CanReceiveEvent(ctx, authsvc.Principal{UserID: unrelated}, event))
+	state.Status = packetspb.CallStatus_CALL_STATUS_ACTIVE
+	assert.False(t, svc.CanReceiveEvent(ctx, principal, event))
+	state.Status = packetspb.CallStatus_CALL_STATUS_ENDED
+	event.ConversationId = otherChannel.String()
+	assert.False(t, svc.CanReceiveEvent(ctx, principal, event), "call and conversation must match")
+	state.CallId = otherCall.String()
+	assert.False(t, svc.CanReceiveEvent(ctx, principal, event), "no access to other calls")
+	event.ConversationId = channel.String()
+	event.Payload = &packetspb.ServerEvent_CallRaisedHandsChanged{CallRaisedHandsChanged: &packetspb.CallRaisedHandsChangedEvent{CallId: call.String()}}
+	assert.False(t, svc.CanReceiveEvent(ctx, principal, event))
+	event.Payload = &packetspb.ServerEvent_MessageCreated{MessageCreated: &packetspb.MessageEvent{}}
+	assert.False(t, svc.CanReceiveEvent(ctx, principal, event))
+}
+
 func TestIntegration_CanReceiveEvent_UserCallPresenceChangedAllowsWorkspaceMembers(t *testing.T) {
 	pool, _ := testdb.New(t)
 	ctx := context.Background()

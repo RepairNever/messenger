@@ -883,8 +883,10 @@ func (s *Service) CanReceiveEvent(ctx context.Context, principal Principal, evt 
 	}
 
 	callIDValue := ""
+	allowEndedParticipant := false
 	if callStateChanged := evt.GetCallStateChanged(); callStateChanged != nil {
 		callIDValue = callStateChanged.GetCallId()
+		allowEndedParticipant = callStateChanged.GetStatus() == packetspb.CallStatus_CALL_STATUS_ENDED
 	} else if raisedHandsChanged := evt.GetCallRaisedHandsChanged(); raisedHandsChanged != nil {
 		callIDValue = raisedHandsChanged.GetCallId()
 	}
@@ -902,10 +904,12 @@ func (s *Service) CanReceiveEvent(ctx context.Context, principal Principal, evt 
 		SELECT EXISTS (
 			SELECT 1
 			FROM call_participants cp
+			JOIN calls c ON c.id = cp.call_id
 			WHERE cp.call_id = $1
 			  AND cp.user_id = $2
-			  AND cp.left_at IS NULL
-		)`, callID, principal.UserID).Scan(&isParticipant); err != nil {
+			  AND c.channel_id = $3
+			  AND (cp.left_at IS NULL OR ($4 AND c.status = 'ended'))
+		)`, callID, principal.UserID, channelID, allowEndedParticipant).Scan(&isParticipant); err != nil {
 		return false
 	}
 	return isParticipant

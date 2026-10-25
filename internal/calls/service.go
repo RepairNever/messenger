@@ -2017,6 +2017,7 @@ func (s *Service) findCallByRoomTx(ctx context.Context, tx pgx.Tx, roomName stri
 		SELECT id, channel_id, livekit_room
 		  FROM calls
 		 WHERE livekit_room = $1
+		   AND status = 'active'
 		 ORDER BY started_at DESC
 		 LIMIT 1
 		 FOR UPDATE`, roomName).Scan(&row.ID, &row.ChannelID, &row.LiveKitRoom)

@@ -1,15 +1,21 @@
 -- name: ListDMCandidates :many
-SELECT id,
-       display_name,
-       email,
-       avatar_url,
-       custom_status_text,
-       custom_status_emoji,
-       custom_status_expires_at
-FROM users
-WHERE id <> @requester_id
-  AND status = 'active'
-ORDER BY lower(COALESCE(NULLIF(display_name, ''), email)), id;
+SELECT u.id,
+       u.display_name,
+       u.email,
+       u.avatar_url,
+       u.custom_status_text,
+       u.custom_status_emoji,
+       u.custom_status_expires_at,
+       EXISTS (
+         SELECT 1
+         FROM user_devices ud
+         WHERE ud.user_id = u.id
+           AND ud.revoked_at IS NULL
+       ) AS has_e2ee_device
+FROM users u
+WHERE u.id <> @requester_id
+  AND u.status = 'active'
+ORDER BY lower(COALESCE(NULLIF(u.display_name, ''), u.email)), u.id;
 
 -- name: ListAvailablePublicChannels :many
 SELECT c.id,
