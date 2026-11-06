@@ -37,8 +37,6 @@ func (c *Config) Validate() error {
 	dbURL, err := url.Parse(c.DatabaseURL)
 	check(err == nil && dbURL.Host != "" && (dbURL.Scheme == "postgres" || dbURL.Scheme == "postgresql"),
 		"DATABASE_URL must be a PostgreSQL connection URL")
-	check(c.DatabaseURL != "postgres://msgnr:msgnr@localhost/msgnr?sslmode=disable",
-		"DATABASE_URL must be configured for production")
 	check(len(strings.TrimSpace(c.JWTSecret)) >= 32, "JWT_SECRET must contain at least 32 bytes; generate it with openssl rand -hex 32")
 	check(strings.TrimSpace(c.MinioEndpoint) != "", "MINIO_ENDPOINT is required")
 	check(strings.TrimSpace(c.MinioAccessKey) != "" && c.MinioAccessKey != "minioadmin", "MINIO_ACCESS_KEY must use non-default credentials")
@@ -49,12 +47,15 @@ func (c *Config) Validate() error {
 	originsValid := strings.TrimSpace(c.CORSAllowedOrigins) != ""
 	for _, origin := range strings.Split(c.CORSAllowedOrigins, ",") {
 		origin = strings.TrimSpace(origin)
+		if origin == "*" {
+			continue
+		}
 		u, err := url.Parse(origin)
 		if err != nil || strings.Contains(origin, "*") || u.Scheme == "" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 			originsValid = false
 		}
 	}
-	check(originsValid, "CORS_ALLOWED_ORIGINS must list explicit origins without wildcards, paths or trailing slashes")
+	check(originsValid, "CORS_ALLOWED_ORIGINS must list explicit origins without paths or trailing slashes, or use '*'")
 
 	if c.LiveKitAPIKey != "" || c.LiveKitAPISecret != "" {
 		check(strings.TrimSpace(c.LiveKitAPIKey) != "" && c.LiveKitAPIKey != "devkey" && c.LiveKitAPIKey != "your-livekit-api-key",

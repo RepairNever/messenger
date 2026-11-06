@@ -25,6 +25,13 @@ func TestValidateProduction(t *testing.T) {
 	t.Chdir(t.TempDir())
 	base := productionConfig(t)
 	require.NoError(t, base.Validate())
+	for _, origins := range []string{"*", "  *  ", base.CORSAllowedOrigins + ", *"} {
+		t.Run("valid CORS "+origins, func(t *testing.T) {
+			cfg := *base
+			cfg.CORSAllowedOrigins = origins
+			require.NoError(t, cfg.Validate())
+		})
+	}
 
 	tests := []struct {
 		name   string
@@ -41,8 +48,8 @@ func TestValidateProduction(t *testing.T) {
 		{"default storage secret", func(c *Config) { c.MinioSecretKey = "minioadmin" }, "MINIO_SECRET_KEY"},
 		{"blank storage secret", func(c *Config) { c.MinioSecretKey = "" }, "MINIO_SECRET_KEY"},
 		{"blank bucket", func(c *Config) { c.MinioBucket = "" }, "MINIO_BUCKET"},
-		{"wildcard CORS", func(c *Config) { c.CORSAllowedOrigins = "*" }, "CORS_ALLOWED_ORIGINS"},
-		{"mixed wildcard CORS", func(c *Config) { c.CORSAllowedOrigins += ",*" }, "CORS_ALLOWED_ORIGINS"},
+		{"partial wildcard CORS", func(c *Config) { c.CORSAllowedOrigins = "https://*.example.test" }, "CORS_ALLOWED_ORIGINS"},
+		{"wildcard CORS with invalid origin", func(c *Config) { c.CORSAllowedOrigins = "*,https://chat.example.test/" }, "CORS_ALLOWED_ORIGINS"},
 		{"blank CORS", func(c *Config) { c.CORSAllowedOrigins = "" }, "CORS_ALLOWED_ORIGINS"},
 		{"CORS path", func(c *Config) { c.CORSAllowedOrigins = "https://chat.example.test/" }, "CORS_ALLOWED_ORIGINS"},
 		{"CORS user info", func(c *Config) { c.CORSAllowedOrigins = "https://user:pass@chat.example.test" }, "CORS_ALLOWED_ORIGINS"},
